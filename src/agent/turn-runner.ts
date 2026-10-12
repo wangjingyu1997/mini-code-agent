@@ -1,0 +1,212 @@
+import { randomUUID } from "node:crypto";
+import type { EventBus } from "../events/event-bus";
+import { serializeError } from "../events/event";
+import type { Model } from "../model/model";
+import type { ModelEvent, ToolCall } from "../model/types";
+import type { ToolOrchestrator } from "../tools/orchestrator";
+import type { AgentSession } from "./session";
+import type { TurnTerminalState } from "./state";
+
+export type TurnRunnerOptions = Readonly<{
+  maxSteps?: number;
+}>;
+
+export class TurnRunner {
+  private readonly maxSteps: number;
+
+  constructor(
+    private readonly model: Model,
+    private readonly tools: ToolOrchestrator,
+    private readonly events: EventBus,
+    options: TurnRunnerOptions = {},
+  ) {
+    this.maxSteps = options.maxSteps ?? 20;
+  }
+
+  async run(
+    session: AgentSession,
+    input: string,
+    signal: AbortSignal,
+  ): Promise<TurnTerminalState> {
+    const turnId = randomUUID();
+    session.append({ role: "user", content: input });
+
+    await this.events.emit({
+      type: "turn.started",
+      sessionId: session.id,
+      turnId,
+      input,
+      at: Date.now(),
+    });
+
+    try {
+      for (let step = 1; step <= this.maxSteps; step += 1) {
+        if (signal.aborted) {
+          return await this.abort(session, turnId, step - 1, signal);
+        }
+
+        const stepId = `${turnId}:${step}`;
+        const assistantText: string[] = [];
+        const toolCalls: ToolCall[] = [];
+
+        await this.events.emit({
+          type: "model.started",
+          sessionId: session.id,
+          turnId,
+          stepId,
+          at: Date.now(),
+        });
+
+        for await (const event of this.model.stream(
+          {
+            sessionId: session.id,
+            turnId,
+            stepId,
+            messages: [...session.history],
+          },
+          signal,
+        )) {
+          this.consumeModelEvent(event, assistantText, toolCalls);
+
+          if (event.type === "text.delta") {
+            await this.events.emit({
+              type: "model.text.delta",
+              sessionId: session.id,
+              turnId,
+              stepId,
+              delta: event.text,
+              at: Date.now(),
+            });
+          }
+
+          if (event.type === "tool.call") {
+            await this.events.emit({
+              type: "tool.requested",
+              sessionId: session.id,
+              turnId,
+              stepId,
+              callId: event.call.id,
+              toolName: event.call.name,
+              input: event.call.input,
+              at: Date.now(),
+            });
+          }
+        }
+
+        const text = assistantText.join("");
+        if (text) {
+          session.append({ role: "assistant", content: text });
+        }
+
+        if (toolCalls.length === 0) {
+          await this.events.emit({
+            type: "turn.completed",
+            sessionId: session.id,
+            turnId,
+            answer: text,
+            at: Date.now(),
+          });
+
+          return {
+            type: "completed",
+            answer: text,
+            turnId,
+            steps: step,
+          };
+        }
+
+        for (const call of toolCalls) {
+          if (signal.aborted) {
+            return await this.abort(session, turnId, step, signal);
+          }
+
+          const result = await this.tools.execute(
+            call,
+            {
+              cwd: session.cwd,
+              sessionId: session.id,
+              turnId,
+              stepId,
+            },
+            signal,
+          );
+
+          session.append({
+            role: "tool",
+            callId: result.callId,
+            toolName: result.toolName,
+            content: result.content,
+            isError: result.isError,
+          });
+        }
+      }
+
+      return {
+        type: "max_steps",
+        turnId,
+        steps: this.maxSteps,
+      };
+    } catch (error) {
+      if (signal.aborted) {
+        return await this.abort(session, turnId, 0, signal);
+      }
+
+      const serialized = serializeError(error);
+      await this.events.emit({
+        type: "turn.failed",
+        sessionId: session.id,
+        turnId,
+        error: serialized,
+        at: Date.now(),
+      });
+
+      return {
+        type: "failed",
+        error: serialized,
+        turnId,
+        steps: 0,
+      };
+    }
+  }
+
+  private consumeModelEvent(
+    event: ModelEvent,
+    text: string[],
+    toolCalls: ToolCall[],
+  ): void {
+    if (event.type === "text.delta") {
+      text.push(event.text);
+      return;
+    }
+
+    if (event.type === "tool.call") {
+      toolCalls.push(event.call);
+    }
+  }
+
+  private async abort(
+    session: AgentSession,
+    turnId: string,
+    steps: number,
+    signal: AbortSignal,
+  ): Promise<TurnTerminalState> {
+    const reason = signal.reason instanceof Error
+      ? signal.reason.message
+      : String(signal.reason ?? "aborted");
+
+    await this.events.emit({
+      type: "turn.aborted",
+      sessionId: session.id,
+      turnId,
+      reason,
+      at: Date.now(),
+    });
+
+    return {
+      type: "aborted",
+      reason,
+      turnId,
+      steps,
+    };
+  }
+}

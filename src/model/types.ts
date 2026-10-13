@@ -1,3 +1,5 @@
+import type { ToolCall, ToolDefinition } from "../contracts/tool";
+
 export type UserMessage = Readonly<{
   role: "user";
   content: string;
@@ -8,6 +10,13 @@ export type AssistantMessage = Readonly<{
   content: string;
 }>;
 
+export type AssistantToolCallMessage = Readonly<{
+  role: "assistant_tool_call";
+  callId: string;
+  toolName: string;
+  input: unknown;
+}>;
+
 export type ToolMessage = Readonly<{
   role: "tool";
   callId: string;
@@ -16,19 +25,18 @@ export type ToolMessage = Readonly<{
   isError: boolean;
 }>;
 
-export type AgentMessage = UserMessage | AssistantMessage | ToolMessage;
-
-export type ToolCall = Readonly<{
-  id: string;
-  name: string;
-  input: unknown;
-}>;
+export type AgentMessage =
+  | UserMessage
+  | AssistantMessage
+  | AssistantToolCallMessage
+  | ToolMessage;
 
 export type ModelRequest = Readonly<{
   sessionId: string;
   turnId: string;
   stepId: string;
   messages: readonly AgentMessage[];
+  tools: readonly ToolDefinition[];
 }>;
 
 export type ModelEvent =

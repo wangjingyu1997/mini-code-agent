@@ -33,6 +33,7 @@ async function resolveInsideWorkspace(cwd: string, requestedPath: string): Promi
     throw new Error(`Path escapes workspace: ${requestedPath}`);
   }
 
+  // Existing paths may still escape through a symlink, so resolve the real target too.
   const resolved = await realpath(absolute);
   const realRelative = path.relative(root, resolved);
 
@@ -45,6 +46,15 @@ async function resolveInsideWorkspace(cwd: string, requestedPath: string): Promi
 
 export const listFilesTool: Tool<ListFilesInput, ListFilesOutput> = {
   name: "list_files",
+  description: "List files and directories inside a workspace directory.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Directory path relative to the workspace root. Use . for the root." },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
 
   validate: parseInput,
 

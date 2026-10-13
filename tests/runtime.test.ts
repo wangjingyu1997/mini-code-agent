@@ -43,6 +43,7 @@ test("runtime performs model -> tool -> model across two steps", async () => {
 
   assert.equal(result.steps, 2);
   assert.match(result.answer, /read_file/);
+  assert.ok(session.history.some((message) => message.role === "assistant_tool_call"));
   assert.ok(session.history.some((message) => message.role === "tool"));
 
   const eventTypes = store.all().map((event) => event.type);

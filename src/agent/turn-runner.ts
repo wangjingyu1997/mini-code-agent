@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
 import type { Model } from "../model/model";
-import type { ModelEvent, ToolCall } from "../model/types";
+import type { ModelEvent } from "../model/types";
 import type { ToolOrchestrator } from "../tools/orchestrator";
 import type { AgentSession } from "./session";
 import type { TurnTerminalState } from "./state";
@@ -63,6 +64,7 @@ export class TurnRunner {
             turnId,
             stepId,
             messages: [...session.history],
+            tools: this.tools.definitions(),
           },
           signal,
         )) {
@@ -96,6 +98,15 @@ export class TurnRunner {
         const text = assistantText.join("");
         if (text) {
           session.append({ role: "assistant", content: text });
+        }
+
+        for (const call of toolCalls) {
+          session.append({
+            role: "assistant_tool_call",
+            callId: call.id,
+            toolName: call.name,
+            input: call.input,
+          });
         }
 
         if (toolCalls.length === 0) {

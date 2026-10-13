@@ -1,3 +1,4 @@
+import type { ToolDefinition } from "../contracts/tool";
 import type { Tool } from "./tool";
 
 export class ToolRegistry {
@@ -16,6 +17,14 @@ export class ToolRegistry {
       throw new Error(`Unknown tool: ${name}`);
     }
     return tool;
+  }
+
+  definitions(): readonly ToolDefinition[] {
+    return [...this.tools.values()].map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    }));
   }
 
   names(): readonly string[] {

@@ -1,6 +1,6 @@
+import type { ToolCall, ToolDefinition } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
-import type { ToolCall } from "../model/types";
 import type { ToolContext } from "./tool";
 import type { ToolRegistry } from "./registry";
 
@@ -16,6 +16,10 @@ export class ToolOrchestrator {
     private readonly registry: ToolRegistry,
     private readonly events: EventBus,
   ) {}
+
+  definitions(): readonly ToolDefinition[] {
+    return this.registry.definitions();
+  }
 
   async execute(
     call: ToolCall,

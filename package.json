@@ -1,6 +1,6 @@
 {
   "name": "mini-code-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A production-oriented coding-agent runtime built step by step.",
   "type": "commonjs",
@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm build && node dist/src/index.js",
-    "test": "pnpm build && node --test dist/tests"
+    "dev:env": "pnpm build && node --env-file=.env dist/src/index.js",
+    "test": "pnpm build && node --test dist/tests/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

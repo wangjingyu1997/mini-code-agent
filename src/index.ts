@@ -5,7 +5,7 @@ import { AgentRuntime } from "./agent/agent-runtime";
 import { TurnRunner } from "./agent/turn-runner";
 import { EventBus } from "./events/event-bus";
 import { InMemoryEventStore } from "./events/in-memory-event-store";
-import { MockModel } from "./model/mock-model";
+import { createModelFromEnv } from "./model/create-model";
 import { ToolOrchestrator } from "./tools/orchestrator";
 import { ToolRegistry } from "./tools/registry";
 import { listFilesTool } from "./tools/tools/list-files";
@@ -19,7 +19,8 @@ async function main(): Promise<void> {
   registry.register(listFilesTool);
 
   const orchestrator = new ToolOrchestrator(registry, events);
-  const runner = new TurnRunner(new MockModel(), orchestrator, events);
+  const model = createModelFromEnv();
+  const runner = new TurnRunner(model, orchestrator, events);
   const runtime = new AgentRuntime(runner, events, store);
   const session = runtime.createSession(process.cwd());
 
@@ -39,11 +40,13 @@ async function main(): Promise<void> {
   });
 
   const rl = readline.createInterface({ input, output });
-  output.write("mini-code-agent v0.1\n输入 exit 退出。\n\n");
+  const provider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
+  output.write(`mini-code-agent v0.2 [provider=${provider}]\n输入 exit 退出。\n\n`);
 
   try {
-    while (true) {
-      const prompt = await rl.question("> ");
+    output.write("> ");
+
+    for await (const prompt of rl) {
       if (prompt.trim().toLowerCase() === "exit") {
         break;
       }
@@ -62,6 +65,8 @@ async function main(): Promise<void> {
       } finally {
         process.removeListener("SIGINT", onSigint);
       }
+
+      output.write("> ");
     }
   } finally {
     rl.close();

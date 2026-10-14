@@ -8,6 +8,7 @@ import { InMemoryEventStore } from "./events/in-memory-event-store";
 import { createModelFromEnv } from "./model/create-model";
 import { ToolOrchestrator } from "./tools/orchestrator";
 import { ToolRegistry } from "./tools/registry";
+import { ToolScheduler } from "./tools/scheduler";
 import { listFilesTool } from "./tools/tools/list-files";
 import { readFileTool } from "./tools/tools/read-file";
 
@@ -19,8 +20,9 @@ async function main(): Promise<void> {
   registry.register(listFilesTool);
 
   const orchestrator = new ToolOrchestrator(registry, events);
+  const scheduler = new ToolScheduler(orchestrator, { maxConcurrency: 4 });
   const model = createModelFromEnv();
-  const runner = new TurnRunner(model, orchestrator, events);
+  const runner = new TurnRunner(model, orchestrator, scheduler, events);
   const runtime = new AgentRuntime(runner, events, store);
   const session = runtime.createSession(process.cwd());
 
@@ -41,7 +43,7 @@ async function main(): Promise<void> {
 
   const rl = readline.createInterface({ input, output });
   const provider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
-  output.write(`mini-code-agent v0.2 [provider=${provider}]\n输入 exit 退出。\n\n`);
+  output.write(`mini-code-agent v0.3 [provider=${provider}]\n输入 exit 退出。\n\n`);
 
   try {
     output.write("> ");

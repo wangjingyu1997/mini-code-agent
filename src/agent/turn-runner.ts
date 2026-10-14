@@ -5,6 +5,7 @@ import { serializeError } from "../events/event";
 import type { Model } from "../model/model";
 import type { ModelEvent } from "../model/types";
 import type { ToolOrchestrator } from "../tools/orchestrator";
+import type { ToolScheduler } from "../tools/scheduler";
 import type { AgentSession } from "./session";
 import type { TurnTerminalState } from "./state";
 
@@ -18,6 +19,7 @@ export class TurnRunner {
   constructor(
     private readonly model: Model,
     private readonly tools: ToolOrchestrator,
+    private readonly scheduler: ToolScheduler,
     private readonly events: EventBus,
     options: TurnRunnerOptions = {},
   ) {
@@ -126,22 +128,22 @@ export class TurnRunner {
           };
         }
 
-        for (const call of toolCalls) {
-          if (signal.aborted) {
-            return await this.abort(session, turnId, step, signal);
-          }
+        const results = await this.scheduler.executeBatch(
+          toolCalls,
+          {
+            cwd: session.cwd,
+            sessionId: session.id,
+            turnId,
+            stepId,
+          },
+          signal,
+        );
 
-          const result = await this.tools.execute(
-            call,
-            {
-              cwd: session.cwd,
-              sessionId: session.id,
-              turnId,
-              stepId,
-            },
-            signal,
-          );
+        if (signal.aborted) {
+          return await this.abort(session, turnId, step, signal);
+        }
 
+        for (const result of results) {
           session.append({
             role: "tool",
             callId: result.callId,

@@ -11,3 +11,16 @@ export type ToolCall = Readonly<{
   name: string;
   input: unknown;
 }>;
+
+export type ResourceAccess = "read" | "write";
+
+export type ResourceClaim = Readonly<{
+  key: string;
+  access: ResourceAccess;
+}>;
+
+export type ExecutionPlan = Readonly<{
+  resources: readonly ResourceClaim[];
+  sideEffect: "none" | "filesystem" | "process" | "network" | "external";
+  risk: "read" | "write" | "destructive";
+}>;

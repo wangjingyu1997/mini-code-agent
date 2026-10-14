@@ -10,6 +10,7 @@ import { InMemoryEventStore } from "../src/events/in-memory-event-store";
 import { MockModel } from "../src/model/mock-model";
 import { ToolOrchestrator } from "../src/tools/orchestrator";
 import { ToolRegistry } from "../src/tools/registry";
+import { ToolScheduler } from "../src/tools/scheduler";
 import { listFilesTool } from "../src/tools/tools/list-files";
 import { readFileTool } from "../src/tools/tools/read-file";
 
@@ -21,7 +22,8 @@ function makeRuntime() {
   registry.register(listFilesTool);
 
   const orchestrator = new ToolOrchestrator(registry, events);
-  const runner = new TurnRunner(new MockModel(), orchestrator, events);
+  const scheduler = new ToolScheduler(orchestrator);
+  const runner = new TurnRunner(new MockModel(), orchestrator, scheduler, events);
   const runtime = new AgentRuntime(runner, events, store);
   return { runtime, store };
 }

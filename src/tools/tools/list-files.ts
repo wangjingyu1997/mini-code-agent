@@ -1,5 +1,6 @@
 import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { workspacePathResource } from "../resource";
 import type { Tool } from "../tool";
 
 export type ListFilesInput = Readonly<{
@@ -33,7 +34,6 @@ async function resolveInsideWorkspace(cwd: string, requestedPath: string): Promi
     throw new Error(`Path escapes workspace: ${requestedPath}`);
   }
 
-  // Existing paths may still escape through a symlink, so resolve the real target too.
   const resolved = await realpath(absolute);
   const realRelative = path.relative(root, resolved);
 
@@ -57,6 +57,19 @@ export const listFilesTool: Tool<ListFilesInput, ListFilesOutput> = {
   },
 
   validate: parseInput,
+
+  plan(input, context) {
+    return {
+      resources: [
+        {
+          key: workspacePathResource(context.cwd, input.path),
+          access: "read",
+        },
+      ],
+      sideEffect: "filesystem",
+      risk: "read",
+    };
+  },
 
   async execute(input, context, signal) {
     if (signal.aborted) {

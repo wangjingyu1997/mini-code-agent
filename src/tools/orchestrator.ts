@@ -1,7 +1,12 @@
-import type { ToolCall, ToolDefinition } from "../contracts/tool";
+import type {
+  ExecutionPlan,
+  ToolCall,
+  ToolDefinition,
+} from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
-import type { ToolContext } from "./tool";
+import { conservativeExecutionPlan } from "./resource";
+import type { Tool, ToolContext } from "./tool";
 import type { ToolRegistry } from "./registry";
 
 export type ToolExecutionResult = Readonly<{
@@ -9,6 +14,14 @@ export type ToolExecutionResult = Readonly<{
   toolName: string;
   content: string;
   isError: boolean;
+}>;
+
+export type PreparedToolExecution = Readonly<{
+  call: ToolCall;
+  plan: ExecutionPlan;
+  tool?: Tool<any, any>;
+  input?: unknown;
+  preparationError?: unknown;
 }>;
 
 export class ToolOrchestrator {
@@ -21,14 +34,32 @@ export class ToolOrchestrator {
     return this.registry.definitions();
   }
 
-  async execute(
-    call: ToolCall,
+  prepare(call: ToolCall, context: ToolContext): PreparedToolExecution {
+    try {
+      const tool = this.registry.get(call.name);
+      const input = tool.validate(call.input);
+      const plan = tool.plan(input, context);
+
+      return { call, tool, input, plan };
+    } catch (error) {
+      return {
+        call,
+        plan: conservativeExecutionPlan,
+        preparationError: error,
+      };
+    }
+  }
+
+  async executePrepared(
+    prepared: PreparedToolExecution,
     context: ToolContext,
     signal: AbortSignal,
   ): Promise<ToolExecutionResult> {
     if (signal.aborted) {
       throw signal.reason ?? new Error("Tool execution aborted");
     }
+
+    const { call } = prepared;
 
     await this.events.emit({
       type: "tool.started",
@@ -41,10 +72,20 @@ export class ToolOrchestrator {
     });
 
     try {
-      const tool = this.registry.get(call.name);
-      const input = tool.validate(call.input);
-      const output = await tool.execute(input, context, signal);
-      const content = tool.serialize(output);
+      if (prepared.preparationError) {
+        throw prepared.preparationError;
+      }
+
+      if (!prepared.tool) {
+        throw new Error(`Tool was not prepared: ${call.name}`);
+      }
+
+      const output = await prepared.tool.execute(
+        prepared.input,
+        context,
+        signal,
+      );
+      const content = prepared.tool.serialize(output);
 
       await this.events.emit({
         type: "tool.completed",
@@ -84,5 +125,13 @@ export class ToolOrchestrator {
         isError: true,
       };
     }
+  }
+
+  async execute(
+    call: ToolCall,
+    context: ToolContext,
+    signal: AbortSignal,
+  ): Promise<ToolExecutionResult> {
+    return this.executePrepared(this.prepare(call, context), context, signal);
   }
 }

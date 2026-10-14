@@ -6,24 +6,24 @@ A production-oriented Coding Agent built incrementally in TypeScript.
 
 ## Current version
 
-`v0.2.0` — Real LLM Provider + Streaming Tool Calling
+`v0.3.0` — Resource-aware Tool Scheduler
 
-## V0.2 capabilities
+## V0.3 capabilities
 
-- Session / Turn / Step runtime from V0.1
+- Session / Turn / Step runtime
 - Provider-independent `Model` interface
-- Deterministic `MockModel` remains available for runtime tests
-- OpenAI Responses API adapter using native `fetch`
-- Raw SSE parsing
-- Streaming text normalization
-- Interleaved function-call argument buffering by `item_id`
-- Multiple tool calls in one model step
-- Tool JSON Schema exposed from Tool Registry to the model
+- OpenAI Responses API streaming adapter
+- Tool JSON Schema exposed to the model
 - Complete `function_call -> function_call_output` causal history
-- `AbortSignal` propagated into the HTTP request and tool execution
-- Non-2xx provider error propagation
-- CLI provider selection through environment variables
-- Automated runtime / tool / provider adapter tests
+- `Tool.plan(input, context)` execution planning contract
+- Resource Claims with `read` / `write` access modes
+- Resource conflict detection
+- Bounded tool concurrency via `maxConcurrency`
+- FIFO fairness for contended resources
+- Dynamic admission: newly-safe work starts as soon as running work completes
+- Deterministic result join in original model call order
+- Conservative global workspace claim when planning fails
+- `AbortSignal` propagation through model, scheduler and tool execution
 
 ## Run
 
@@ -43,8 +43,6 @@ Try:
 ```
 
 ### OpenAI provider
-
-Copy the example environment file:
 
 ```bash
 cp .env.example .env
@@ -78,13 +76,25 @@ CLI
               -> HTTP POST /v1/responses
               -> SSE stream
               -> Provider event normalization
+      -> ToolScheduler
+         -> ExecutionPlan / ResourceClaim
+         -> conflict detection
+         -> maxConcurrency / fairness / cancellation
       -> ToolOrchestrator
-         -> ToolRegistry
+         -> validation / preparation / execution / events
+      -> ToolRegistry
          -> Tool
       -> EventBus / EventStore
 ```
 
-The runtime does not know whether the model is Mock or OpenAI. Provider-specific streaming details stop at the Model adapter boundary.
+The core separation is now:
+
+```text
+TurnRunner      decides which model step we are in
+ToolScheduler   decides WHEN a prepared tool call may start
+ToolOrchestrator decides HOW one tool call is prepared and executed
+Tool            performs the domain operation
+```
 
 ## Important runtime flow
 
@@ -92,22 +102,48 @@ The runtime does not know whether the model is Mock or OpenAI. Provider-specific
 UserMessage
    -> Model.stream()
       -> text.delta
-      -> function-call argument deltas
-      -> completed ToolCall
+      -> one or more ToolCall
    -> TurnRunner
       -> AssistantToolCallMessage
+      -> ToolScheduler.executeBatch()
+         -> Tool.plan()
+         -> ResourceClaim conflict checks
+         -> bounded concurrent execution
       -> ToolOrchestrator
-      -> ToolMessage
+      -> ToolMessage[]
+   -> results re-joined in original ToolCall order
    -> next Model step
 ```
 
-The session stores both the assistant's tool-call request and the tool result. This preserves the causal relationship needed by real model APIs.
+## Resource model
+
+V0.3 intentionally starts with a small resource model:
+
+```text
+ResourceClaim = {
+  key: string
+  access: "read" | "write"
+}
+```
+
+Conflict rule:
+
+```text
+R + R -> no conflict
+R + W -> conflict
+W + R -> conflict
+W + W -> conflict
+```
+
+`workspace:*` is a conservative global resource. A tool whose resource plan cannot be trusted can claim it and serialize against all workspace work.
+
+This version uses canonical lexical workspace paths. More precise hierarchical resource modeling, patch-file version checks and external-world concurrency are deferred to the Patch Engine phase.
 
 ## Roadmap
 
-- `v0.1` Agent Kernel: Session / Turn / Step, EventBus, MockModel, basic tools
+- `v0.1` Agent Kernel: Session / Turn / Step, EventBus, MockModel, basic tools ✅
 - `v0.2` Real LLM adapter + streaming tool calls ✅
-- `v0.3` Tool Scheduler + bounded concurrency + resource claims
+- `v0.3` Tool Scheduler + bounded concurrency + resource claims ✅
 - `v0.4` Patch Engine + optimistic concurrency
 - `v0.5` Permission + Sandbox
 - `v0.6` Workspace / Git integration
@@ -127,14 +163,13 @@ The session stores both the assistant's tool-call request and the tool result. T
 **本次实现**
 
 1. 建立 `AgentRuntime -> TurnRunner -> Model -> Tool -> Observation -> Next Step` 的最小 Agent Loop。
-2. 区分 `Session / Turn / Step` 生命周期，避免把所有运行时语义塞进一个巨大 `while` 循环。
-3. 使用 `AsyncIterable<ModelEvent>` 作为模型接口，为真实模型的流式文本、流式 Tool Call 和取消传播预留稳定契约。
-4. 建立 `EventBus + InMemoryEventStore`，让 CLI、日志、未来的 Web UI / Telemetry 可以通过事件观察 Runtime，而不是读取内部可变状态。
-5. 建立 `ToolRegistry + ToolOrchestrator`，把“工具具体做什么”和“工具如何被 Runtime 调度执行”分开。
-6. 实现 `read_file`、`list_files`，并加入 workspace 路径边界与 symlink escape 检查。
-7. 从 V0.1 开始让 Tool 接收 `AbortSignal`，后续 shell / network 工具可以把取消继续传播到底层资源。
-8. 使用确定性的 `MockModel` 隔离 probabilistic model behavior，先验证 deterministic runtime correctness。
-9. 增加自动化测试，覆盖两步 Agent Loop、取消、正常文件读取、workspace escape、防止目录枚举非确定性。
+2. 区分 `Session / Turn / Step` 生命周期，避免把所有运行时语义塞进一个巨大循环。
+3. 使用 `AsyncIterable<ModelEvent>` 作为模型接口，为流式文本、Tool Call 和取消传播预留稳定契约。
+4. 建立 `EventBus + InMemoryEventStore`，把 Runtime state 与对外事件观察分开。
+5. 建立 `ToolRegistry + ToolOrchestrator`，把 Tool domain operation 与 Runtime orchestration 分开。
+6. 实现 `read_file`、`list_files`，加入 workspace path boundary 和 symlink escape 检查。
+7. Tool 从 V0.1 开始接收 `AbortSignal`。
+8. 使用 deterministic `MockModel` 先验证 deterministic runtime correctness。
 
 **核心认识**
 
@@ -146,40 +181,23 @@ Coding Agent 的主体不是一次 LLM API 调用，而是围绕模型构建的�
 
 **目标**
 
-在不破坏 `TurnRunner` 核心控制流的前提下，把确定性的 `MockModel` 扩展为可切换的真实模型 Provider，并把 HTTP/SSE、流式文本、流式函数参数、多 Tool Call、工具 Schema 和 Provider 错误封装在 Adapter 边界内。
-
-**真实接入暴露出的 V0.1 缺口**
-
-1. V0.1 的 Session 只记录了 Tool Result，却没有记录 Assistant 发起 Tool Call 的事实；真实 API 需要完整的 `function_call -> function_call_output` 因果链。
-2. V0.1 的 Tool Contract 没有 description / JSON Schema，因此真实模型不知道有哪些工具以及参数格式。
-3. Provider 的函数参数不是一次性 JSON，而可能以多个字符串 delta 交错流入；不能对每个半包直接 `JSON.parse`。
-4. 多个 Tool Call 可以在同一 Response 中交错 streaming，必须通过 `item_id` 做 correlation，再通过 `call_id` 与工具结果关联。
-5. 原来的 Node test script 使用目录路径，在当前 Node 22 环境下无法直接运行，改成显式 `dist/tests/*.test.js`。
-6. CLI 使用 `readline.question()` 时对 stdin EOF 不够健壮，改为 async iterator，使交互式终端和管道输入都能正常结束。
+在不破坏 `TurnRunner` 核心控制流的前提下，引入真实模型 Provider，并把 HTTP / SSE / Provider event / function-call correlation 隔离在 Adapter 边界。
 
 **本次实现**
 
-1. 新增 `src/contracts/tool.ts`，把 `ToolCall` / `ToolDefinition` 从具体 Model Provider 中抽离成共享 Runtime Contract。
-2. Tool 增加 `description` 与 `inputSchema`；`ToolRegistry` 可以导出工具定义给模型。
-3. `ModelRequest` 新增 `tools`，但 `TurnRunner` 仍只依赖抽象 `Model`，不知道 OpenAI 的事件格式。
-4. Session 新增 `assistant_tool_call` message，保存模型调用工具时的 `callId / toolName / input`。
-5. 新增 `OpenAIResponsesModel`：使用 Node 原生 `fetch` 调用 `/v1/responses`，并传递 `AbortSignal`。
-6. 新增 SSE parser，把网络字节流恢复成 provider event stream。
-7. Adapter 把 `response.output_text.delta` 归一化为内部 `text.delta`。
-8. Adapter 按 `item_id` 缓冲 `response.function_call_arguments.delta`；只在函数参数完成后解析完整 JSON，避免半包 JSON 错误。
-9. Adapter 支持同一 Response 中多个函数调用交错到达，并将 OpenAI `call_id` 归一化为内部 ToolCall ID。
-10. Provider API 的 4xx/5xx 和 streaming error 会向 Runtime 明确传播，而不是被伪装成正常回答。
-11. 新增 `createModelFromEnv()`，CLI 可用 `MODEL_PROVIDER=mock|openai` 切换 Provider。
-12. 新增 `.env.example`，API key 不进入仓库。
-13. 新增 OpenAI Adapter 单元测试；全部测试达到 8/8 通过。
-
-**为什么不直接使用 SDK**
-
-这一课刻意使用原生 `fetch + SSE`，目的是理解 Provider Adapter 真正承担的职责。后续即便替换成官方 SDK，`TurnRunner`、Session、ToolOrchestrator 的架构边界仍然保持不变。
+1. 新增 `src/contracts/tool.ts`，把 ToolCall / ToolDefinition 提升为 Runtime shared contract。
+2. Tool 增加 description / JSON Schema，真实模型可以发现工具和参数结构。
+3. Session 新增 `assistant_tool_call`，保存完整 `function_call -> function_call_output` 因果链。
+4. 新增 OpenAI Responses API Adapter，使用原生 `fetch + SSE`。
+5. 将 Provider-specific streaming events 归一化成内部 `ModelEvent`。
+6. 按 `item_id` 缓冲 function arguments delta，完成后才解析 JSON。
+7. 支持同一 Response 中多个 Tool Call 交错 streaming，并用 `call_id` 关联 Tool Result。
+8. `AbortSignal` 真正进入 HTTP request。
+9. 修正 CLI EOF 与 Node test command 的真实运行问题。
 
 **核心认识**
 
-Provider Adapter 不是简单的“API 包装器”。它实际上是一个协议边界：负责把供应商特有的 HTTP、SSE、事件类型、function-call correlation 和错误模型，归一化成 Agent Runtime 能理解的稳定事件协议。
+Provider Adapter 不是简单 API wrapper，而是 Anti-Corruption Layer：外部模型协议不能泄漏进 Agent Runtime。
 
 **验证结果**
 
@@ -189,6 +207,85 @@ Automated tests: 8/8 PASS
 Mock CLI two-step Agent Loop: PASS
 ```
 
-**下一课（V0.3）**
+---
 
-实现 Tool Scheduler。真实模型现在可以一次产生多个 Tool Call，下一步必须回答：哪些工具可以并行？哪些必须串行？如何限制并发数量？如何用 Resource Claim 表达 read/write 冲突？如何处理 cancellation、fairness、backpressure 和 deterministic result join？
+### 2026-10-14 — V0.3 Tool Scheduler + Resource Claims
+
+**目标**
+
+真实模型现在可以在一个 Step 中生成多个 Tool Call。V0.2 仍然通过 `for (...) await execute(...)` 串行执行，因此今天正式建立 Tool Scheduling 层，解决安全并发、资源冲突、背压、公平性、取消和确定性结果归并。
+
+**从 Codex 学到的设计线索**
+
+当前 Codex 的 Tool Runtime 让 Tool 声明自己是否支持 parallel tool calls，默认不支持；其运行时使用 shared/exclusive gate 让 parallel-safe 调用共享执行，而非 parallel 调用获得独占执行权。我们的 V0.3 保留“并发能力属于 Tool Contract，而不是 Scheduler 硬编码工具名”这个原则，但进一步把 boolean 扩展成动态 `ExecutionPlan + ResourceClaim`。
+
+**本次实现**
+
+1. `Tool` 新增 `plan(input, context): ExecutionPlan`。
+2. 新增 `ResourceClaim { key, access }`，access 为 `read | write`。
+3. 新增 `ExecutionPlan`，同时描述资源、side effect 和 risk。
+4. 新增 `workspacePathResource()`，将 Tool input 映射成 canonical lexical workspace resource key。
+5. 新增 `workspace:*` conservative global claim；未知工具、参数验证失败或无法安全规划时不会乐观并发，而是保守串行。
+6. `ToolOrchestrator` 拆成 `prepare()` 与 `executePrepared()`：先 validation + planning，再由 Scheduler 决定何时执行。
+7. 新增 `ToolScheduler.executeBatch()`，从 TurnRunner 接收一个 Model Step 产生的整个 ToolCall batch。
+8. Scheduler 允许 `read/read` 并发，阻止同资源上的 `read/write`、`write/read`、`write/write`。
+9. 新增 `maxConcurrency`，即使 100 个调用互不冲突也不会无限并发，形成 backpressure。
+10. Scheduler 不是静态分批；任一 running task 完成后会立即重新 drain queue，让新近变得安全的任务马上启动。
+11. 加入 per-resource FIFO fairness：一个 waiting writer 前面仍有 reader 时，后来的 reader 不能持续越过 writer，避免 writer starvation；不相关资源仍可继续执行。
+12. Tool 实际完成顺序可以乱序，但 Scheduler 最终按原始 Model ToolCall index 返回结果，Session history 因而保持 deterministic logical order。
+13. TurnRunner 从逐个 `await this.tools.execute()` 改成一次 `scheduler.executeBatch()`。
+14. `AbortSignal` 进入 Scheduler；abort 时停止继续 admission，并把同一个 signal 传给已运行 Tool。
+15. `read_file` / `list_files` 现在都声明自己的 read resource plan。
+
+**为什么不用 `Promise.all(toolCalls.map(execute))`**
+
+因为 `Promise.all` 只解决并发，不解决正确性。它不知道两个 Tool 是否访问同一资源，也没有并发上限、公平性、排队语义或取消 admission。Scheduler 本质上是一个小型 admission-control system。
+
+**V0.3 冲突模型**
+
+```text
+read(file:a)  + read(file:a)   -> parallel
+read(file:a)  + read(file:b)   -> parallel
+read(file:a)  + write(file:a)  -> serialize
+write(file:a) + write(file:a)  -> serialize
+workspace:* write + any workspace claim -> serialize
+```
+
+**公平性例子**
+
+```text
+R1(file:a) running
+W (file:a) waiting
+R2(file:a) later
+R3(file:b) later
+```
+
+允许 `R3` 继续，因为与 writer 无关；阻止 `R2` 越过 `W`，否则持续到来的 reader 可能让 writer 永远拿不到执行机会。
+
+**验证结果**
+
+V0.3 核心回归 harness 已验证：
+
+```text
+Core TypeScript compile: PASS
+Runtime / Tool / Scheduler tests: 11/11 PASS
+```
+
+新增 Scheduler 行为测试覆盖：
+
+- independent reads concurrent
+- same-resource read/write serialization
+- bounded `maxConcurrency`
+- completion order != logical result order
+- waiting-writer fairness
+- cancellation of queued scheduling work
+
+OpenAI Provider Adapter 代码和其原有 3 个测试本次未修改；在本地拉取仓库后请执行 `pnpm test` 做完整项目回归。
+
+**核心认识**
+
+Tool Scheduler 不负责“工具怎么执行”，而负责“工具什么时候可以执行”。真正可演进的并发模型必须让 Tool 暴露资源意图，让 Scheduler 只理解通用 ExecutionPlan，而不是理解具体工具名。
+
+**下一课（V0.4）**
+
+进入 Patch Engine + Optimistic Concurrency。Scheduler 只能协调经过本进程的 Tool；它无法阻止用户在 VSCode、另一个进程或另一个 Agent 同时修改文件。下一步会实现 snapshot hash、stale-file detection、preflight、hunk matching、atomic single-file write、multi-file transaction-like commit 与 rollback。

@@ -9,6 +9,7 @@ import { createModelFromEnv } from "./model/create-model";
 import { ToolOrchestrator } from "./tools/orchestrator";
 import { ToolRegistry } from "./tools/registry";
 import { ToolScheduler } from "./tools/scheduler";
+import { applyPatchTool } from "./tools/tools/apply-patch";
 import { listFilesTool } from "./tools/tools/list-files";
 import { readFileTool } from "./tools/tools/read-file";
 
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
   const registry = new ToolRegistry();
   registry.register(readFileTool);
   registry.register(listFilesTool);
+  registry.register(applyPatchTool);
 
   const orchestrator = new ToolOrchestrator(registry, events);
   const scheduler = new ToolScheduler(orchestrator, { maxConcurrency: 4 });
@@ -43,7 +45,7 @@ async function main(): Promise<void> {
 
   const rl = readline.createInterface({ input, output });
   const provider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
-  output.write(`mini-code-agent v0.3 [provider=${provider}]\n输入 exit 退出。\n\n`);
+  output.write(`mini-code-agent v0.4-dev [provider=${provider}]\n输入 exit 退出。\n\n`);
 
   try {
     output.write("> ");

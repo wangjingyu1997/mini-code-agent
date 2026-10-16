@@ -1,5 +1,6 @@
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { snapshotFile } from "../../patch/patch-engine";
 import { workspacePathResource } from "../resource";
 import type { Tool } from "../tool";
 
@@ -10,6 +11,7 @@ export type ReadFileInput = Readonly<{
 export type ReadFileOutput = Readonly<{
   path: string;
   content: string;
+  hash: string;
 }>;
 
 function parseInput(input: unknown): ReadFileInput {
@@ -26,28 +28,19 @@ function parseInput(input: unknown): ReadFileInput {
   return { path: input.path };
 }
 
-async function resolveInsideWorkspace(cwd: string, requestedPath: string): Promise<string> {
+async function assertLexicallyInsideWorkspace(cwd: string, requestedPath: string): Promise<void> {
   const root = await realpath(cwd);
   const absolute = path.resolve(root, requestedPath);
-  const lexicalRelative = path.relative(root, absolute);
+  const relative = path.relative(root, absolute);
 
-  if (lexicalRelative.startsWith("..") || path.isAbsolute(lexicalRelative)) {
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`Path escapes workspace: ${requestedPath}`);
   }
-
-  const resolved = await realpath(absolute);
-  const realRelative = path.relative(root, resolved);
-
-  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
-    throw new Error(`Path escapes workspace through symlink: ${requestedPath}`);
-  }
-
-  return resolved;
 }
 
 export const readFileTool: Tool<ReadFileInput, ReadFileOutput> = {
   name: "read_file",
-  description: "Read a UTF-8 text file inside the current workspace.",
+  description: "Read a UTF-8 text file inside the current workspace and return a snapshot hash for safe later edits.",
   inputSchema: {
     type: "object",
     properties: {
@@ -77,16 +70,13 @@ export const readFileTool: Tool<ReadFileInput, ReadFileOutput> = {
       throw signal.reason ?? new Error("read_file aborted");
     }
 
-    const absolute = await resolveInsideWorkspace(context.cwd, input.path);
-    const content = await readFile(absolute, "utf8");
-
-    return {
-      path: path.relative(context.cwd, absolute),
-      content,
-    };
+    // Keep the fast lexical check here so malformed paths fail before any
+    // snapshot work; snapshotFile performs the realpath/symlink boundary check.
+    await assertLexicallyInsideWorkspace(context.cwd, input.path);
+    return snapshotFile(context.cwd, input.path);
   },
 
   serialize(output) {
-    return `${output.path}\n---\n${output.content}`;
+    return `${output.path}\nsha256:${output.hash}\n---\n${output.content}`;
   },
 };

@@ -6,7 +6,7 @@ A production-oriented Coding Agent built incrementally in TypeScript.
 
 ## Current version
 
-`v0.3.0` — Resource-aware Tool Scheduler
+`v0.4-dev` — Groq Provider + Patch Engine + approval-gated Bash Tool
 
 ## V0.3 capabilities
 
@@ -192,7 +192,7 @@ This version uses canonical lexical workspace paths. More precise hierarchical r
 - `v0.1` Agent Kernel: Session / Turn / Step, EventBus, MockModel, basic tools ✅
 - `v0.2` Real LLM adapter + streaming tool calls ✅
 - `v0.3` Tool Scheduler + bounded concurrency + resource claims ✅
-- `v0.4` Patch Engine + optimistic concurrency
+- `v0.4` Patch Engine + optimistic concurrency ✅ (initial single-file implementation)
 - `v0.5` Permission + Sandbox
 - `v0.6` Workspace / Git integration
 - `v0.7` Codebase Intelligence: AST / symbols / repo map
@@ -382,6 +382,7 @@ OpenAI Responses Adapter，不将供应商协议泄漏到 Agent Runtime。
 5. 接入 AbortSignal，尝试终止子进程组，并在 1 秒后升级为 SIGKILL。
 6. 防止常见凭证环境变量自动传给子进程，并阻止 `read_file` 读取常见 secret 文件。
 7. 新增 `tests/bash.test.ts` 行为测试，包括拒绝、非零退出码、超时、取消、截断和环境变量保护。
+8. 新增 GitHub Actions CI：push / pull request 时执行 TypeScript build 和测试。
 
 **需要本机验证**
 

@@ -125,3 +125,23 @@ test("bash checks abort before user approval", async () => {
   );
   assert.equal(wasAsked, false);
 });
+
+
+test("bash does not inherit API keys into child processes", async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "mini-agent-bash-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const previous = process.env.MINI_AGENT_TEST_SECRET_TOKEN;
+  process.env.MINI_AGENT_TEST_SECRET_TOKEN = "should-not-leak";
+  t.after(() => {
+    if (previous === undefined) delete process.env.MINI_AGENT_TEST_SECRET_TOKEN;
+    else process.env.MINI_AGENT_TEST_SECRET_TOKEN = previous;
+  });
+
+  const tool = createBashTool({ approve: async () => true });
+  const result = await tool.execute(
+    { command: "printf '%s' \"${MINI_AGENT_TEST_SECRET_TOKEN:-missing}\"" },
+    context(cwd),
+    new AbortController().signal,
+  );
+  assert.equal(result.stdout, "missing");
+});

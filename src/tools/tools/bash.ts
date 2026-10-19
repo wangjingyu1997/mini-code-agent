@@ -56,6 +56,18 @@ function terminateProcessGroup(child: ChildProcess, signal: NodeJS.Signals): voi
   }
 }
 
+// Do not automatically pass cloud API credentials to model-generated commands.
+// This is defense-in-depth, not a substitute for a sandbox or user approval.
+function sanitizedChildEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of Object.keys(env)) {
+    if (/(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL|PRIVATE[_-]?KEY)/i.test(name)) {
+      delete env[name];
+    }
+  }
+  return env;
+}
+
 export function createBashTool(options: BashToolOptions): Tool<BashInput, BashOutput> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const maxOutputBytes = options.maxOutputBytes ?? 64 * 1024;
@@ -110,6 +122,7 @@ export function createBashTool(options: BashToolOptions): Tool<BashInput, BashOu
         stdio: ["ignore", "pipe", "pipe"],
         detached: process.platform !== "win32",
         windowsHide: true,
+        env: sanitizedChildEnvironment(),
       });
 
       return await new Promise<BashOutput>((resolve, reject) => {

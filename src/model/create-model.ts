@@ -28,5 +28,20 @@ export function createModelFromEnv(env: ModelEnvironment = process.env): Model {
     });
   }
 
+  if (provider === "groq") {
+    const apiKey = env.GROQ_API_KEY?.trim();
+    const model = env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
+
+    if (!apiKey) {
+      throw new Error("MODEL_PROVIDER=groq requires GROQ_API_KEY");
+    }
+
+    return new OpenAIResponsesModel({
+      apiKey,
+      model,
+      baseUrl: "https://api.groq.com/openai/v1",
+    });
+  }
+
   throw new Error(`Unsupported MODEL_PROVIDER: ${provider}`);
 }

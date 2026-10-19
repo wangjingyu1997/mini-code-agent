@@ -69,6 +69,27 @@ Keep keys only in your ignored `.env` file. Groq's Responses API is in beta;
 a successful non-streaming API request does not by itself validate streamed
 function calling. Verify the full model -> tool -> model loop with your key.
 
+### Bash execution (approval required)
+
+The CLI now registers `bash` alongside `read_file`, `list_files`, and
+`apply_patch`. Ask the Agent to run `git status` or `pnpm test`. It will
+show the exact command and require `y` or `yes` before execution.
+Any other answer denies the command.
+
+Commands run with the project as their working directory, a default
+120-second deadline, and a combined stdout/stderr capture limit of 64 KiB.
+Nonzero exit codes are returned to the model with stderr so it can diagnose
+failures. Commands use the Bash shell and currently target macOS/Linux.
+
+**Security:** This is an approval gate, NOT an OS sandbox. A confirmed shell
+command can read or modify files outside the workspace, access the network,
+and run arbitrary programs with your account permissions. Review commands
+carefully; do not approve commands that print secrets or your local `.env`.
+The tool removes common credential-like environment variables before
+spawning child processes, and `read_file` blocks typical secret files, but
+neither defense is complete. Use a disposable repository for early trials.
+Future versions will add policy-driven approvals and real isolation.
+
 ### OpenAI provider
 
 ```bash
@@ -342,3 +363,38 @@ OpenAI Responses Adapter，不将供应商协议泄漏到 Agent Runtime。
 
 1. 本机运行 `pnpm test` 并用 Groq 测试完整 Tool Calling 闭环。
 2. 实现具备审批、超时、取消及输出限额的 Bash Tool，进入真实编程工作流。
+
+---
+
+### 2026-10-19 — Bash Tool / First Real Coding Workflow
+
+**目标**
+
+从教学型 Agent Loop 转向可用于实际开发的 CLI Coding Agent：让模型能够在人工许可后
+执行 shell 命令、读取测试结果，并继续修复代码。
+
+**本次代码**
+
+1. 新增 `src/tools/tools/bash.ts`，用 `spawn("bash", ["-c", command])` 执行。
+2. 每条模型生成的命令都需要 CLI 交互确认；拒绝时不执行。
+3. 将 Bash 声明为保守的 `workspace:*` 写资源，避免与其他 workspace tool 并发。
+4. 输出 stdout/stderr、退出码、超时状态及截断状态；设置默认超时和输出限额。
+5. 接入 AbortSignal，尝试终止子进程组，并在 1 秒后升级为 SIGKILL。
+6. 防止常见凭证环境变量自动传给子进程，并阻止 `read_file` 读取常见 secret 文件。
+7. 新增 `tests/bash.test.ts` 行为测试，包括拒绝、非零退出码、超时、取消、截断和环境变量保护。
+
+**需要本机验证**
+
+```bash
+git pull --ff-only
+pnpm test
+pnpm dev:env
+```
+
+在 CLI 中输入：`请运行 git status，并说明工作区是否干净`。执行前会要求确认。
+**代码已提交，自动测试和 Groq + bash 端到端体验尚未在本地运行验证。**
+
+**后续重点**
+
+引入用户可配置的审批策略、真正的 sandbox / 进程隔离、持久化会话、
+上下文压缩，以及基于真实仓库任务的 Agent 成功率测试。

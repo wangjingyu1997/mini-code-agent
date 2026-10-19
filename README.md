@@ -42,6 +42,33 @@ Try:
 列出当前目录文件
 ```
 
+### Groq provider (recommended for current development)
+
+Create a key at https://console.groq.com/keys and set:
+
+```dotenv
+MODEL_PROVIDER=groq
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=openai/gpt-oss-120b
+```
+
+Then run:
+
+```bash
+pnpm test
+pnpm dev:env
+```
+
+Try: `读取 package.json，并解释 scripts 的作用`.
+
+Groq uses its OpenAI-compatible Responses API; the existing
+`OpenAIResponsesModel` handles streaming and tool calls. No code changes
+to `TurnRunner` or `ToolScheduler` are required.
+
+Keep keys only in your ignored `.env` file. Groq's Responses API is in beta;
+a successful non-streaming API request does not by itself validate streamed
+function calling. Verify the full model -> tool -> model loop with your key.
+
 ### OpenAI provider
 
 ```bash
@@ -289,3 +316,29 @@ Tool Scheduler 不负责“工具怎么执行”，而负责“工具什么时�
 **下一课（V0.4）**
 
 进入 Patch Engine + Optimistic Concurrency。Scheduler 只能协调经过本进程的 Tool；它无法阻止用户在 VSCode、另一个进程或另一个 Agent 同时修改文件。下一步会实现 snapshot hash、stale-file detection、preflight、hunk matching、atomic single-file write、multi-file transaction-like commit 与 rollback。
+---
+
+### 2026-10-19 — Groq Provider Integration
+
+**目标**
+
+接入可用于真实 Coding Agent 开发的 Groq 免费层，复用已经实现的
+OpenAI Responses Adapter，不将供应商协议泄漏到 Agent Runtime。
+
+**本次实现**
+
+1. `createModelFromEnv` 支持 `MODEL_PROVIDER=groq`，默认模型 `openai/gpt-oss-120b`。
+2. 使用 `https://api.groq.com/openai/v1` 作为 Responses API baseUrl。
+3. 更新 `.env.example`，增加 Provider 工厂测试。
+4. 已通过 Groq 非流式 Responses API 手动验证模型可访问；真实 SSE Tool Calling
+   尚需在本机使用 `pnpm dev:env` 进行端到端验证。
+
+**设计决定**
+
+复用现有 `Model.stream()` 接口和 Provider Adapter；不因新增供应商而修改
+`TurnRunner`、`ToolScheduler` 或工具执行链路。
+
+**下一步**
+
+1. 本机运行 `pnpm test` 并用 Groq 测试完整 Tool Calling 闭环。
+2. 实现具备审批、超时、取消及输出限额的 Bash Tool，进入真实编程工作流。

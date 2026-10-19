@@ -17,7 +17,7 @@ export type BashOutput = Readonly<{
 export type BashApproval = (request: Readonly<{
   command: string;
   cwd: string;
-}>) => Promise<boolean>;
+}>, signal: AbortSignal) => Promise<boolean>;
 
 export type BashToolOptions = Readonly<{
   approve: BashApproval;
@@ -96,7 +96,7 @@ export function createBashTool(options: BashToolOptions): Tool<BashInput, BashOu
       const approved = await options.approve({
         command: input.command,
         cwd: context.cwd,
-      });
+      }, signal);
       if (signal.aborted) {
         throw signal.reason ?? new Error("bash aborted");
       }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -131,4 +131,22 @@ test("apply_patch rejects ambiguous oldText matches", async () => {
     ),
     /ambiguous/,
   );
+});
+
+
+test("read_file refuses .env secrets including symlink aliases", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "mini-agent-secret-"));
+  await writeFile(path.join(cwd, ".env"), "GROQ_API_KEY=fake-test-secret", "utf8");
+  await symlink(".env", path.join(cwd, "innocent.txt"));
+
+  for (const requestedPath of [".env", "innocent.txt"]) {
+    await assert.rejects(
+      () => readFileTool.execute(
+        { path: requestedPath },
+        context(cwd),
+        new AbortController().signal,
+      ),
+      /Access to credential file is blocked/,
+    );
+  }
 });

@@ -38,6 +38,19 @@ async function assertLexicallyInsideWorkspace(cwd: string, requestedPath: string
   }
 }
 
+// Avoid sending common credentials to a remote model by accident.
+// This is a baseline protection, not a complete secret scanner.
+function assertNotCredentialFile(requestedPath: string): void {
+  const base = path.basename(requestedPath).toLowerCase();
+  if (
+    base === ".env" ||
+    (base.startsWith(".env.") && base !== ".env.example") ||
+    [".npmrc", ".netrc", ".pypirc", "id_rsa", "id_ed25519"].includes(base)
+  ) {
+    throw new Error("Access to credential file is blocked: " + requestedPath);
+  }
+}
+
 export const readFileTool: Tool<ReadFileInput, ReadFileOutput> = {
   name: "read_file",
   description: "Read a UTF-8 text file inside the current workspace and return a snapshot hash for safe later edits.",
@@ -72,7 +85,12 @@ export const readFileTool: Tool<ReadFileInput, ReadFileOutput> = {
 
     // Keep the fast lexical check here so malformed paths fail before any
     // snapshot work; snapshotFile performs the realpath/symlink boundary check.
+    assertNotCredentialFile(input.path);
     await assertLexicallyInsideWorkspace(context.cwd, input.path);
+    // Check both the requested name and resolved target to prevent a symlink
+    // with an innocuous name from revealing a known credential file.
+    const resolvedTarget = await realpath(path.resolve(context.cwd, input.path));
+    assertNotCredentialFile(resolvedTarget);
     return snapshotFile(context.cwd, input.path);
   },
 

@@ -88,6 +88,9 @@ export class OpenAIResponsesModel implements Model {
       "Use the provided tools when you need filesystem evidence.",
       "Do not invent file contents or directory entries.",
       "Keep tool arguments minimal and valid according to their JSON schema.",
+      "Use bash only when needed; every shell command requires user approval.",
+      "If a command is denied, do not retry it without a new user request.",
+      "Never request or reveal API keys, credentials, or .env file contents.",
     ].join(" ");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }

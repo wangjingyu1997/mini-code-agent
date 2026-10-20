@@ -54,15 +54,22 @@ export class ToolOrchestrator {
     prepared: PreparedToolExecution,
     context: ToolContext,
     signal: AbortSignal,
+    scheduling: Readonly<{
+      queueWaitMs: number;
+      queueReason?: "concurrency_limit" | "resource_conflict" | "fifo_fairness";
+    }> = { queueWaitMs: 0 },
   ): Promise<ToolExecutionResult> {
     if (signal.aborted) {
       throw signal.reason ?? new Error("Tool execution aborted");
     }
 
     const { call } = prepared;
+    const startedAt = Date.now();
 
     await this.events.emit({
       type: "tool.started",
+      queueWaitMs: scheduling.queueWaitMs,
+      ...(scheduling.queueReason ? { queueReason: scheduling.queueReason } : {}),
       sessionId: context.sessionId,
       turnId: context.turnId,
       stepId: context.stepId,
@@ -89,6 +96,7 @@ export class ToolOrchestrator {
 
       await this.events.emit({
         type: "tool.completed",
+        durationMs: Date.now() - startedAt,
         sessionId: context.sessionId,
         turnId: context.turnId,
         stepId: context.stepId,
@@ -109,6 +117,7 @@ export class ToolOrchestrator {
 
       await this.events.emit({
         type: "tool.failed",
+        durationMs: Date.now() - startedAt,
         sessionId: context.sessionId,
         turnId: context.turnId,
         stepId: context.stepId,

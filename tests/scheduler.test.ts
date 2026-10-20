@@ -215,3 +215,36 @@ test("abort rejects queued scheduling work", async () => {
   setTimeout(() => controller.abort(new Error("stop")), 5);
   await assert.rejects(promise, /stop/);
 });
+
+
+test("scheduler reports time spent waiting on a resource conflict", async () => {
+  const events = new EventBus();
+  const starts: Array<{ callId: string; queueWaitMs: number; queueReason?: string }> = [];
+  events.subscribe((event) => {
+    if (event.type === "tool.started") {
+      starts.push({
+        callId: event.callId,
+        queueWaitMs: event.queueWaitMs,
+        ...(event.queueReason ? { queueReason: event.queueReason } : {}),
+      });
+    }
+  });
+
+  const registry = new ToolRegistry();
+  registry.register(createDelayTool("delay"));
+  const scheduler = new ToolScheduler(new ToolOrchestrator(registry, events), {
+    maxConcurrency: 3,
+  });
+  await scheduler.executeBatch(
+    [
+      call("read", { resource: "file:a", access: "read", delayMs: 25, value: "r" }),
+      call("write", { resource: "file:a", access: "write", delayMs: 1, value: "w" }),
+    ],
+    context,
+    new AbortController().signal,
+  );
+
+  assert.deepEqual(starts.map((entry) => entry.callId), ["read", "write"]);
+  assert.equal(starts[1]?.queueReason, "resource_conflict");
+  assert.ok(starts[1]!.queueWaitMs >= 0);
+});

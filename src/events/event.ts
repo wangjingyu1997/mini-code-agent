@@ -20,6 +20,25 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "model.completed";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      durationMs: number;
+      toolCallCount: number;
+      textChars: number;
+      at: number;
+    }>
+  | Readonly<{
+      type: "model.failed";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      durationMs: number;
+      error: SerializedError;
+      at: number;
+    }>
+  | Readonly<{
       type: "model.text.delta";
       sessionId: string;
       turnId: string;
@@ -39,6 +58,8 @@ export type AgentEvent =
     }>
   | Readonly<{
       type: "tool.started";
+      queueWaitMs: number;
+      queueReason?: "concurrency_limit" | "resource_conflict" | "fifo_fairness";
       sessionId: string;
       turnId: string;
       stepId: string;
@@ -48,6 +69,7 @@ export type AgentEvent =
     }>
   | Readonly<{
       type: "tool.completed";
+      durationMs: number;
       sessionId: string;
       turnId: string;
       stepId: string;
@@ -58,6 +80,7 @@ export type AgentEvent =
     }>
   | Readonly<{
       type: "tool.failed";
+      durationMs: number;
       sessionId: string;
       turnId: string;
       stepId: string;

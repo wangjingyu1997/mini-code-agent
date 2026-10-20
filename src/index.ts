@@ -1,10 +1,12 @@
 import process from "node:process";
 import readline from "node:readline/promises";
+import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { AgentRuntime } from "./agent/agent-runtime";
 import { TurnRunner } from "./agent/turn-runner";
 import { EventBus } from "./events/event-bus";
 import { InMemoryEventStore } from "./events/in-memory-event-store";
+import { JsonlEventRecorder } from "./events/jsonl-event-recorder";
 import { createModelFromEnv } from "./model/create-model";
 import { ToolOrchestrator } from "./tools/orchestrator";
 import { ToolRegistry } from "./tools/registry";
@@ -18,6 +20,10 @@ async function main(): Promise<void> {
   const rl = readline.createInterface({ input, output });
   const events = new EventBus();
   const store = new InMemoryEventStore();
+  const recorder = new JsonlEventRecorder(
+    path.join(process.cwd(), ".mini-code-agent", "logs", "events.jsonl"),
+  );
+  events.subscribe((event) => recorder.record(event));
   const registry = new ToolRegistry();
   registry.register(readFileTool);
   registry.register(listFilesTool);
@@ -47,14 +53,23 @@ async function main(): Promise<void> {
     if (event.type === "model.text.delta") {
       output.write(event.delta);
     }
+    if (event.type === "model.completed") {
+      output.write(`\n[model:done] ${event.durationMs}ms, calls=${event.toolCallCount}\n`);
+    }
+    if (event.type === "model.failed") {
+      output.write(`\n[model:error] ${event.error.name} (${event.durationMs}ms)\n`);
+    }
     if (event.type === "tool.started") {
-      output.write(`\n[tool:start] ${event.toolName}\n`);
+      const wait = event.queueWaitMs > 0
+        ? ` waited=${event.queueWaitMs}ms${event.queueReason ? ` reason=${event.queueReason}` : ""}`
+        : "";
+      output.write(`\n[tool:start] ${event.toolName}${wait}\n`);
     }
     if (event.type === "tool.completed") {
-      output.write(`[tool:done] ${event.toolName}\n`);
+      output.write(`[tool:done] ${event.toolName} ${event.durationMs}ms\n`);
     }
     if (event.type === "tool.failed") {
-      output.write(`[tool:error] ${event.toolName}: ${event.error.message}\n`);
+      output.write(`[tool:error] ${event.toolName}: ${event.error.message} (${event.durationMs}ms)\n`);
     }
   });
 
@@ -97,6 +112,7 @@ async function main(): Promise<void> {
     }
   } finally {
     rl.close();
+    await recorder.flush();
   }
 }
 

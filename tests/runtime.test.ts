@@ -8,6 +8,7 @@ import { TurnRunner } from "../src/agent/turn-runner";
 import { EventBus } from "../src/events/event-bus";
 import { InMemoryEventStore } from "../src/events/in-memory-event-store";
 import { MockModel } from "../src/model/mock-model";
+import type { Model } from "../src/model/model";
 import { ToolOrchestrator } from "../src/tools/orchestrator";
 import { ToolRegistry } from "../src/tools/registry";
 import { ToolScheduler } from "../src/tools/scheduler";
@@ -80,4 +81,31 @@ test("runtime returns aborted when signal is already aborted", async () => {
   );
 
   assert.equal(result.type, "aborted");
+});
+
+
+test("runtime records a failed model step before failing the turn", async () => {
+  const events = new EventBus();
+  const store = new InMemoryEventStore();
+  const registry = new ToolRegistry();
+  const orchestrator = new ToolOrchestrator(registry, events);
+  const scheduler = new ToolScheduler(orchestrator);
+  const model: Model = {
+    async *stream() {
+      throw new Error("simulated model transport error");
+    },
+  };
+  const runtime = new AgentRuntime(
+    new TurnRunner(model, orchestrator, scheduler, events),
+    events,
+    store,
+  );
+  const session = runtime.createSession(process.cwd());
+  const result = await runtime.runTurn(session, "trigger test");
+
+  assert.equal(result.type, "failed");
+  const failures = store.all().filter((event) => event.type === "model.failed");
+  assert.equal(failures.length, 1);
+  assert.ok(failures[0]!.durationMs >= 0);
+  assert.ok(store.all().some((event) => event.type === "turn.failed"));
 });

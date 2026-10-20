@@ -53,6 +53,18 @@ test("runtime performs model -> tool -> model across two steps", async () => {
   assert.ok(eventTypes.includes("tool.started"));
   assert.ok(eventTypes.includes("tool.completed"));
   assert.ok(eventTypes.includes("turn.completed"));
+
+  const modelMetrics = store.all().filter((event) => event.type === "model.completed");
+  assert.equal(modelMetrics.length, 2);
+  assert.ok(modelMetrics.every((event) => event.durationMs >= 0));
+
+  const completedTools = store.all().filter((event) => event.type === "tool.completed");
+  assert.equal(completedTools.length, 1);
+  assert.ok(completedTools[0]!.durationMs >= 0);
+
+  const startedTools = store.all().filter((event) => event.type === "tool.started");
+  assert.equal(startedTools.length, 1);
+  assert.ok(startedTools[0]!.queueWaitMs >= 0);
 });
 
 test("runtime returns aborted when signal is already aborted", async () => {

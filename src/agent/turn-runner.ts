@@ -52,6 +52,7 @@ export class TurnRunner {
         const assistantText: string[] = [];
         const toolCalls: ToolCall[] = [];
 
+        const modelStartedAt = Date.now();
         await this.events.emit({
           type: "model.started",
           sessionId: session.id,
@@ -60,42 +61,66 @@ export class TurnRunner {
           at: Date.now(),
         });
 
-        for await (const event of this.model.stream(
-          {
+        try {
+          for await (const event of this.model.stream(
+            {
+              sessionId: session.id,
+              turnId,
+              stepId,
+              messages: [...session.history],
+              tools: this.tools.definitions(),
+            },
+            signal,
+          )) {
+            this.consumeModelEvent(event, assistantText, toolCalls);
+  
+            if (event.type === "text.delta") {
+              await this.events.emit({
+                type: "model.text.delta",
+                sessionId: session.id,
+                turnId,
+                stepId,
+                delta: event.text,
+                at: Date.now(),
+              });
+            }
+  
+            if (event.type === "tool.call") {
+              await this.events.emit({
+                type: "tool.requested",
+                sessionId: session.id,
+                turnId,
+                stepId,
+                callId: event.call.id,
+                toolName: event.call.name,
+                input: event.call.input,
+                at: Date.now(),
+              });
+            }
+          }
+        } catch (error) {
+          await this.events.emit({
+            type: "model.failed",
             sessionId: session.id,
             turnId,
             stepId,
-            messages: [...session.history],
-            tools: this.tools.definitions(),
-          },
-          signal,
-        )) {
-          this.consumeModelEvent(event, assistantText, toolCalls);
-
-          if (event.type === "text.delta") {
-            await this.events.emit({
-              type: "model.text.delta",
-              sessionId: session.id,
-              turnId,
-              stepId,
-              delta: event.text,
-              at: Date.now(),
-            });
-          }
-
-          if (event.type === "tool.call") {
-            await this.events.emit({
-              type: "tool.requested",
-              sessionId: session.id,
-              turnId,
-              stepId,
-              callId: event.call.id,
-              toolName: event.call.name,
-              input: event.call.input,
-              at: Date.now(),
-            });
-          }
+            durationMs: Date.now() - modelStartedAt,
+            error: serializeError(error),
+            at: Date.now(),
+          });
+          throw error;
         }
+
+        await this.events.emit({
+          type: "model.completed",
+          sessionId: session.id,
+          turnId,
+          stepId,
+          durationMs: Date.now() - modelStartedAt,
+          toolCallCount: toolCalls.length,
+          textChars: assistantText.reduce((sum, chunk) => sum + chunk.length, 0),
+          at: Date.now(),
+        });
 
         const text = assistantText.join("");
         if (text) {

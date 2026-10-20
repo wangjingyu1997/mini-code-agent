@@ -524,3 +524,43 @@ pnpm dev:env
 **验证**
 
 运行 `pnpm test` 与 Groq 模型 Tool Calling 端到端验证；本次提交前请参考 CI 状态，不能仅凭设计宣称测试通过。
+
+
+---
+
+### 2026-10-20 — Cross-Batch ToolScheduler: Runtime-level resource coordination
+
+**背景与测试驱动**
+
+之前的 ToolScheduler 在每次 `executeBatch()` 内部维护 `running` 和
+`tasks`；不同 Batch 即使使用同一个 Scheduler 实例，也无法互相感知资源占用。
+
+新增 `tests/scheduler-cross-batch.test.ts`，先在旧实现上运行：
+48 项测试中 5 项失败，稳定复现跨 Batch 冲突、全局并发上限、
+写者等待公平性和取消后的资源释放漏洞。
+
+**实现**
+
+1. 将 `queued` 和 `running` 提升为 `ToolScheduler` 实例级共享状态。
+2. 每个 `executeBatch()` 拥有独立 `Batch` 状态：
+   `AbortSignal`、`context`、按原始顺序排列的 `results`、`remaining`
+   和完成 `Promise`。
+3. 全局 `drain()` 按进入队列的顺序对资源冲突和并发上限进行准入判断；
+   不冲突任务可以越过阻塞项，写者不会被同资源的新读者无限插队。
+4. 取消时立刻拒绝该 Batch 并移除其**待执行**任务；
+   已开始的任务继续占用资源，直到实际异步 Promise settle，避免取消后提前解锁。
+5. 一个 Batch 中的工具意外异常只失败该 Batch，不影响其他 Batch；
+   即使工具正常返回 `isError`，仍按工具结果处理。
+
+**测试结果**
+
+GitHub Actions：TypeScript build PASS，48/48 自动化测试通过，
+包含跨 Batch 资源冲突、FIFO、公平性、最大并发、独立取消、
+不合作异步操作取消后的资源保留与批次结果隔离。
+
+**边界**
+
+这只保护**同一个 ToolScheduler 实例**中的资源，不是跨进程锁；
+不同 Scheduler 实例间也不共享状态。`workspacePathResource()`
+仍采用词法路径，符号链接别名和实际路径可能生成不同资源键；
+下一阶段要评估与 Pi 的 `realpath` 队列策略如何融合。

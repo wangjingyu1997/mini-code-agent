@@ -90,6 +90,44 @@ spawning child processes, and `read_file` blocks typical secret files, but
 neither defense is complete. Use a disposable repository for early trials.
 Future versions will add policy-driven approvals and real isolation.
 
+### Local observability (metadata-only)
+
+The CLI logs model-step duration, tool execution duration, and Scheduler queue
+wait time to the terminal. Every execution also records privacy-conscious
+metadata to:
+
+```text
+.mini-code-agent/logs/events.jsonl
+```
+
+The directory is ignored by Git. Each line is a JSON object with `type`,
+`sessionId`, `turnId`, `stepId` (when relevant), timestamp, and selected
+metrics. The recorder **does not persist prompts, model text deltas, tool
+inputs, tool outputs, or exception messages/stacks**, because they can contain
+secrets. This file is for troubleshooting metrics, not session replay.
+It currently writes metadata asynchronously in the background and flushes at
+normal CLI shutdown; an OS crash can lose unwritten records.
+
+Try:
+
+```bash
+pnpm test
+pnpm dev:env
+# After you exit the CLI:
+tail -n 20 .mini-code-agent/logs/events.jsonl
+```
+
+Example event:
+
+```json
+{"version":1,"type":"tool.started","at":0,"sessionId":"s","turnId":"t","stepId":"step","callId":"call-1","toolName":"bash","queueWaitMs":12,"queueReason":"resource_conflict"}
+```
+
+Queue reasons report the **last observed** admission blocker, not a detailed
+history of every conflict. Token counts / provider API usage and approval
+decisions are not yet captured. SQLite session persistence and searchable
+run history remain future work.
+
 ### OpenAI provider
 
 ```bash
@@ -399,3 +437,38 @@ pnpm dev:env
 
 引入用户可配置的审批策略、真正的 sandbox / 进程隔离、持久化会话、
 上下文压缩，以及基于真实仓库任务的 Agent 成功率测试。
+
+---
+
+### 2026-10-20 — Observability V1: metrics + safe JSONL
+
+**本次目标**
+
+把已经具备的事件系统转变成可供实际调试 Coding Agent 的运行轨迹，
+而不是只在终端打印工具开始与结束。
+
+**实现**
+
+1. 新增 `model.completed` / `model.failed` 事件，记录 Step 耗时、文本长度和 ToolCall 数。
+2. `tool.started` 增加 Scheduler 排队等待时间与最后一个阻塞原因。
+3. `tool.completed` / `tool.failed` 增加执行耗时。
+4. 新增 `JsonlEventRecorder`：元数据白名单、异步顺序写入、正常关闭时 flush。
+5. 默认写入 `.mini-code-agent/logs/events.jsonl`，通过 `.gitignore` 排除。
+6. 新增日志脱敏、写入失败、Scheduler 排队、Runtime 生命周期测试。
+
+**安全边界**
+
+原始用户输入、模型文本、工具参数和工具输出可能包含源码或凭证，
+因此不得直接 JSON 序列化完整 `AgentEvent` 到诊断日志。
+本次只持久化明确允许的指标字段。
+
+**本地验证**
+
+运行 `pnpm test`、`pnpm dev:env`；结束交互后检查 JSONL。
+本次改动已提交 GitHub，仍需确认 CI / 本地测试结果及 Groq 真实端到端行为。
+
+**后续**
+
+- 补齐模型 Token 用量、审批结果与安全事件。
+- 会话恢复时引入 SQLite，并明确区分可靠会话存储与最佳努力诊断日志。
+- 增加运行汇总统计（耗时分布、成功率、失败归因），不急于引入独立日志服务。

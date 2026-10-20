@@ -15,6 +15,8 @@ type ScheduledTask = {
   readonly index: number;
   readonly prepared: PreparedToolExecution;
   state: "queued" | "running" | "completed";
+  readonly queuedAt: number;
+  queueReason?: "concurrency_limit" | "resource_conflict" | "fifo_fairness";
 };
 
 export class ToolScheduler {
@@ -48,6 +50,7 @@ export class ToolScheduler {
       index,
       prepared: this.orchestrator.prepare(call, context),
       state: "queued",
+      queuedAt: Date.now(),
     }));
 
     const results = new Array<ToolExecutionResult>(tasks.length);
@@ -101,12 +104,21 @@ export class ToolScheduler {
       };
 
       const canStart = (candidate: ScheduledTask): boolean => {
-        if (running.size >= this.maxConcurrency) return false;
-        if (conflictsWithRunning(candidate)) return false;
+        if (running.size >= this.maxConcurrency) {
+          candidate.queueReason = "concurrency_limit";
+          return false;
+        }
+        if (conflictsWithRunning(candidate)) {
+          candidate.queueReason = "resource_conflict";
+          return false;
+        }
 
         // FIFO fairness per resource: a later task may overtake an earlier queued
         // task only when they do not contend for the same resource.
-        if (conflictsWithEarlierQueued(candidate)) return false;
+        if (conflictsWithEarlierQueued(candidate)) {
+          candidate.queueReason = "fifo_fairness";
+          return false;
+        }
 
         return true;
       };
@@ -116,7 +128,10 @@ export class ToolScheduler {
         running.add(task);
 
         void this.orchestrator
-          .executePrepared(task.prepared, context, signal)
+          .executePrepared(task.prepared, context, signal, {
+            queueWaitMs: Date.now() - task.queuedAt,
+            ...(task.queueReason ? { queueReason: task.queueReason } : {}),
+          })
           .then((result) => {
             if (settled) return;
 

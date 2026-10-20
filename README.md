@@ -128,6 +128,33 @@ history of every conflict. Token counts / provider API usage and approval
 decisions are not yet captured. SQLite session persistence and searchable
 run history remain future work.
 
+### Multi-file Patch Engine (V0.4 incremental)
+
+The new `apply_patch_set` tool accepts `files: [{ path, expectedHash, replacements }]`.
+Each `expectedHash` must be obtained from `read_file` for that exact file.
+`apply_patch` (single-file) remains supported via the same engine.
+
+**Algorithm**
+
+1. `preparePatchSet()`: resolve targets and symlinks, reject aliases, check
+   SHA-256 snapshots and perform exact-text replacements **in memory**.
+2. `commitPatchSet()`: stage all changed files in the same directory as the
+   originals; check every snapshot before making any workspace change.
+3. Recheck a target just before replacing it via `rename()`.
+4. If a later commit step fails, attempt **conditional compensating rollback**
+   for previously replaced files. A file that no longer has the content we
+   committed will *not* be overwritten by the rollback routine.
+
+**Guarantee boundaries:** Multi-file updates are **not atomic**. External
+processes can race between the final check and rename; readers can see a
+partial update; a process crash cannot be recovered yet. Compensating rollback
+is best-effort, and conflicts require inspection. The Tool Scheduler serializes
+`apply_patch_set` against other workspace tools *within the current Agent
+process* only. This is not a cross-process file lock.
+
+For testing, `commitPatchSet()` exposes a programmatic-only `beforeRename`
+injection seam. The model-facing JSON Schema does not expose that seam.
+
 ### OpenAI provider
 
 ```bash
@@ -472,3 +499,28 @@ pnpm dev:env
 - 补齐模型 Token 用量、审批结果与安全事件。
 - 会话恢复时引入 SQLite，并明确区分可靠会话存储与最佳努力诊断日志。
 - 增加运行汇总统计（耗时分布、成功率、失败归因），不急于引入独立日志服务。
+
+---
+
+### 2026-10-20 — V0.4 Patch Engine: staged multi-file preflight
+
+**学习目标**
+
+让已经完成的并发安全/多文件事务设计分析进入实际代码，优先交付可验证的多文件预检与补偿机制，不把“多次 rename”误称为原子事务。
+
+**代码变更**
+
+1. 重构 `src/patch/patch-engine.ts`，新增 `preparePatchSet`、`commitPatchSet`、`applyPatchSet`，并保持原有单文件 `applyPatch` 兼容。
+2. 全文件预检 SHA-256、精确替换与 realpath 重复目标检查。
+3. 所有文件先 Staging，全部校验后再逐个 Commit；中途失败按提交逆序尝试条件回滚。
+4. 新增 `apply_patch_set` 模型工具，使用保守的 workspace 资源声明。
+5. 新增多文件正常路径、stale preflight、重复别名、失败注入、条件回滚冲突测试。
+
+**已知限制**
+
+不提供跨进程锁、全局原子可见性或 crash recovery / transaction journal。
+含中间状态的崩溃需要手工诊断。下一阶段再研究持久化日志、锁语义和可恢复设计。
+
+**验证**
+
+运行 `pnpm test` 与 Groq 模型 Tool Calling 端到端验证；本次提交前请参考 CI 状态，不能仅凭设计宣称测试通过。

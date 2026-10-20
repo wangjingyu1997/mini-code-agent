@@ -12,6 +12,7 @@ import { ToolOrchestrator } from "./tools/orchestrator";
 import { ToolRegistry } from "./tools/registry";
 import { ToolScheduler } from "./tools/scheduler";
 import { applyPatchTool } from "./tools/tools/apply-patch";
+import { applyPatchSetTool } from "./tools/tools/apply-patch-set";
 import { createBashTool } from "./tools/tools/bash";
 import { listFilesTool } from "./tools/tools/list-files";
 import { readFileTool } from "./tools/tools/read-file";
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
   registry.register(readFileTool);
   registry.register(listFilesTool);
   registry.register(applyPatchTool);
+  registry.register(applyPatchSetTool);
   registry.register(createBashTool({
     approve: async ({ command, cwd }, signal) => {
       output.write("\n[bash approval] Working directory: " + cwd + "\n");

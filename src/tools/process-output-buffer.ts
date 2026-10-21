@@ -66,7 +66,9 @@ export class ProcessOutputBuffer {
     const available = Math.max(0, maxBytes - this.storedBytes);
     if (available > 0) {
       const taken = chunk.subarray(0, available);
-      // Copy the retained slice: Buffer.subarray() aliases the full incoming\n      // chunk and could accidentally keep a huge allocation alive.\n      (stream === "stdout" ? this.stdout : this.stderr).push(Buffer.from(taken));
+      // Copy the retained slice: subarray aliases the whole incoming Buffer.
+      // Without a copy, a tiny capture could retain a huge allocation.
+      (stream === "stdout" ? this.stdout : this.stderr).push(Buffer.from(taken));
       this.storedBytes += taken.length;
     }
     if (chunk.length > available && !this.truncatedOutput) {

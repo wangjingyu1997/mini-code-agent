@@ -113,3 +113,21 @@ test("turn abort and max steps have distinct warnings", () => {
   assert.match(output(), /Interrupted/);
   assert.match(output(), /Reached step limit \(20\)/);
 });
+
+
+test("Bash exit failures, timeouts and truncated output are warned, not shown as successful", () => {
+  const { ui, output } = setup({ color: false });
+  const completed = (serialized: string): AgentEvent => ({
+    ...base, type: "tool.completed", stepId: "t:1", callId: "b",
+    toolName: "bash", durationMs: 12, output: serialized,
+  });
+  ui.handle(completed("exit_code: 7\nsignal: none\ntimed_out: false\noutput_truncated: false"));
+  ui.handle(completed("exit_code: null\nsignal: SIGTERM\ntimed_out: true\noutput_truncated: false"));
+  ui.handle(completed("exit_code: 0\nsignal: none\ntimed_out: false\noutput_truncated: true"));
+  ui.handle(completed("exit_code: 0\nsignal: none\ntimed_out: false\noutput_truncated: false"));
+  const s = output();
+  assert.match(s, /⚠ FINISHED bash · exit 7/);
+  assert.match(s, /⚠ FINISHED bash · timed out/);
+  assert.match(s, /⚠ FINISHED bash · output truncated/);
+  assert.match(s, /✓ DONE bash/);
+});

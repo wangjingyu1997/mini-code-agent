@@ -15,6 +15,7 @@ import { applyPatchTool } from "./tools/tools/apply-patch";
 import { applyPatchSetTool } from "./tools/tools/apply-patch-set";
 import { createBashTool } from "./tools/tools/bash";
 import { listFilesTool } from "./tools/tools/list-files";
+import { formatDiagnostic } from "./events/diagnostics";
 import { readFileTool } from "./tools/tools/read-file";
 
 async function main(): Promise<void> {
@@ -59,7 +60,10 @@ async function main(): Promise<void> {
       output.write(`\n[model:done] ${event.durationMs}ms, calls=${event.toolCallCount}\n`);
     }
     if (event.type === "model.failed") {
-      output.write(`\n[model:error] ${event.error.name} (${event.durationMs}ms)\n`);
+      output.write(`\n[model:error] ${event.error.name}: ${formatDiagnostic(event.error.message)} (${event.durationMs}ms)\n`);
+    }
+    if (event.type === "turn.failed") {
+      output.write(`[turn:error] ${event.error.name}: ${formatDiagnostic(event.error.message)}\n`);
     }
     if (event.type === "tool.started") {
       const wait = event.queueWaitMs > 0

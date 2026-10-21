@@ -155,6 +155,12 @@ export class TerminalUI {
               (event.toolCallCount === 1 ? "" : "s") + " · " + event.durationMs + "ms", "dim"));
         }
         break;
+      case "model.rate_limited":
+        this.closeStreamingText();
+        this.line(this.style("⚠ RATE LIMIT", "yellow") + " " +
+          this.style("waiting " + (event.waitMs / 1000).toFixed(2) + "s · retry " +
+            event.attempt + "/" + event.maxRetries, "dim"));
+        break;
       case "model.failed":
         this.closeStreamingText();
         this.reportedModelFailureTurnId = event.turnId;

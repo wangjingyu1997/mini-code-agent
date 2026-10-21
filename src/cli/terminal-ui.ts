@@ -63,6 +63,16 @@ export class TerminalUI {
     this.output.write(text + "\n");
   }
 
+  private bashExitStatus(output: string): { exitCode: string; timedOut: boolean; truncated: boolean } | undefined {
+    const code = /^exit_code: (null|\d+)$/m.exec(output)?.[1];
+    if (!code) return undefined;
+    return {
+      exitCode: code,
+      timedOut: /^timed_out: true$/m.test(output),
+      truncated: /^output_truncated: true$/m.test(output),
+    };
+  }
+
   private closeStreamingText(): void {
     if (this.streamingText && !this.streamEndedWithNewline) this.line();
     this.streamingText = false;
@@ -166,12 +176,25 @@ export class TerminalUI {
           this.style(event.toolName, "bold") + this.style(reason, "dim"));
         break;
       }
-      case "tool.completed":
+      case "tool.completed": {
         this.closeStreamingText();
-        this.line(this.style("✓ DONE", "green") + " " +
-          safeTerminalText(event.toolName) + " " +
-          this.style("· " + event.durationMs + "ms", "dim"));
+        // A Bash Tool may finish correctly while its shell command returns
+        // nonzero, times out or is truncated. Do not present that as success.
+        const shell = event.toolName === "bash"
+          ? this.bashExitStatus(event.output)
+          : undefined;
+        const warning = shell &&
+          (shell.exitCode !== "0" || shell.timedOut || shell.truncated);
+        const status = warning ? "⚠ FINISHED" : "✓ DONE";
+        const detail = shell && warning
+          ? " · " + (shell.timedOut ? "timed out" : shell.truncated
+            ? "output truncated" : "exit " + shell.exitCode)
+          : "";
+        this.line(this.style(status, warning ? "yellow" : "green") + " " +
+          safeTerminalText(event.toolName) + this.style(detail, warning ? "yellow" : "dim") +
+          this.style(" · " + event.durationMs + "ms", "dim"));
         break;
+      }
       case "tool.failed":
         this.closeStreamingText();
         this.line(this.style("✗ TOOL ERROR", "red") + " " +

@@ -223,6 +223,7 @@ test("OpenAI adapter surfaces non-2xx API failures", async () => {
     apiKey: "test-key",
     model: "test-model",
     fetchImpl,
+    maxRateLimitRetries: 0,
   });
 
   await assert.rejects(
@@ -282,5 +283,93 @@ test("OpenAI adapter distinguishes incomplete output from transport termination"
   await assert.rejects(
     collect(model, baseRequest),
     /response.incomplete: max_output_tokens/,
+  );
+});
+
+
+test("HTTP 429 retries an unchanged request once and continues without duplicate tools", async () => {
+  const bodies: string[] = [];
+  let attempts = 0;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    bodies.push(String(init?.body));
+    attempts++;
+    if (attempts === 1) {
+      return new Response(
+        JSON.stringify({ error: { code: "rate_limit_exceeded", message: "TPM exceeded" } }),
+        { status: 429, statusText: "Too Many Requests", headers: { "Retry-After": "0" } },
+      );
+    }
+    return sseResponse([
+      { type: "response.output_text.delta", delta: "Done." },
+      { type: "response.completed" },
+    ]);
+  };
+  const model = new OpenAIResponsesModel({ apiKey: "test-key", model: "test-model", fetchImpl });
+  const events = await collect(model, baseRequest);
+  assert.equal(attempts, 2);
+  assert.equal(bodies[0], bodies[1], "a 429 cannot mutate tool causality or message history");
+  assert.deepEqual(events, [
+    { type: "rate_limit.retry", attempt: 1, maxRetries: 2, waitMs: 0 },
+    { type: "text.delta", text: "Done." },
+    { type: "response.completed" },
+  ]);
+});
+
+test("HTTP 429 repeated beyond retry budget fails without an unbounded loop", async () => {
+  let attempts = 0;
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model", maxRateLimitRetries: 2,
+    fetchImpl: async () => {
+      attempts++;
+      return new Response(JSON.stringify({ error: { message: "too many tokens" } }), {
+        status: 429, statusText: "Too Many Requests", headers: { "Retry-After": "0" },
+      });
+    },
+  });
+  await assert.rejects(collect(model, baseRequest), /after 2 rate-limit retries/);
+  assert.equal(attempts, 3);
+});
+
+test("abort while waiting to retry 429 stops requests and preserves the user reason", async () => {
+  let attempts = 0;
+  const controller = new AbortController();
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => {
+      attempts++;
+      return new Response(JSON.stringify({ error: { message: "TPM exceeded" } }), {
+        status: 429, statusText: "Too Many Requests", headers: { "Retry-After": "20" },
+      });
+    },
+  });
+  await assert.rejects(async () => {
+    for await (const event of model.stream(baseRequest, controller.signal)) {
+      if (event.type === "rate_limit.retry") controller.abort(new Error("user cancelled retry"));
+    }
+  }, /user cancelled retry/);
+  assert.equal(attempts, 1);
+});
+
+test("non-rate-limit HTTP errors fail immediately without retries", async () => {
+  let attempts = 0;
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => {
+      attempts++;
+      return new Response(JSON.stringify({ error: { message: "bad request" } }), {
+        status: 400, statusText: "Bad Request",
+      });
+    },
+  });
+  await assert.rejects(collect(model, baseRequest), /400 Bad Request/);
+  assert.equal(attempts, 1);
+});
+
+test("provider rejects out-of-range retry policy", () => {
+  assert.throws(
+    () => new OpenAIResponsesModel({
+      apiKey: "test-key", model: "test-model", maxRateLimitRetries: 100,
+    }),
+    /maxRateLimitRetries/,
   );
 });

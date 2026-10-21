@@ -712,3 +712,62 @@ GitHub Actions 全量 TypeScript 编译与 70/70 测试通过。
 
 进程组 SIGKILL 是尽力终止，并不能阻止主动逃离进程组的后代、
 跨进程副作用或已经发送到远端的写入。
+
+
+---
+
+### 2026-10-21 — 定期架构审查：进程层去重与裁剪
+
+**背景**
+
+随着 `ProcessSupervisor`（前台 Tool）和
+`ProcessSessionManager`（跨调用的后台会话）分别实现，
+两者复制了 `spawn`、进程组终止、`exit/close` 事件、
+继承管道的输出空闲收尾，以及 stdout/stderr 收集。
+这不是两种业务职责应该合并，而是一个底层机制有了两个事实来源。
+
+**重构结果**
+
+- 新增 `src/tools/process-controller.ts`：一个 Controller 管理一个
+  Shell 子进程/Unix 进程组；区分 `started` 与 `finished`
+  Promise；集中管理取消、超时、SIGTERM/SIGKILL 升级、
+  `exit/close` 和输出管道空闲宽限。
+- 新增 `src/tools/process-output-buffer.ts`：管理 UTF-8
+  跨 Buffer 解码、前台全局字节上限和后台会话有界序列日志；
+  处理数据但**不负责终止进程**。
+- `ProcessSupervisor` 只实现单次前台运行策略：
+  输出超限则请求停止，等待 Controller 完成后返回捕获结果。
+- `ProcessSessionManager` 只实现 Session ID、生命周期记录、
+  游标读取、`terminate`、`forget`、`closeAll`。
+  两种业务入口均复用同一套进程机制。
+- 自查并修复缓冲细节：`Buffer.subarray()` 与原数据共享内存，
+  为避免少量保留字节继续持有巨大的原始 Buffer，截取后应复制。
+- 自查并修复异常生命周期：输出消费者抛错时先请求终止，
+  **不要立即 settle 进程 Promise**；必须保留资源占用，
+  直到受管理进程完成收尾。
+
+**测试**
+
+原有 70 项测试继续通过。新增
+`tests/process-runtime-components.test.ts` 的 9 项测试覆盖
+UTF-8 跨 chunk 解码、stdout/stderr 独立解码状态、
+两条流共享容量上限、游标淘汰、Buffer 拷贝隔离、
+spawn 成功/失败、幂等 stop、输出消费者失败后的资源保持。
+GitHub Actions `pnpm test`：79/79 通过。
+
+**持续审查约定**
+
+在后续每个阶段性功能合并前，主动检查：
+（1）逻辑是否被不同层重复实现；
+（2）状态变量是否有明确且唯一的职责；
+（3）是否出现不必要的抽象或功能分叉；
+（4）取消、超时、错误是否可能提前释放资源；
+（5）安全保证与测试、文档是否一致。
+优先作**小范围、可测试的重构和代码裁剪**，而非持续叠加功能。
+不会为减少行数而合并职责不同的抽象。
+
+**非目标**
+
+并未把长期会话开放给模型，也未提供跨进程锁、
+OS 级沙箱、完整后代进程回收、工作区租约或远程副作用撤销。
+这些能力必须另行设计和验证。

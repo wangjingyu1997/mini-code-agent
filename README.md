@@ -90,6 +90,35 @@ spawning child processes, and `read_file` blocks typical secret files, but
 neither defense is complete. Use a disposable repository for early trials.
 Future versions will add policy-driven approvals and real isolation.
 
+### Terminal UX
+
+The CLI uses a small dependency-free terminal renderer for clearly separated
+assistant text, tool activity, command approval and failures. With a real TTY:
+
+- Cyan: Agent heading, progress, and running tools.
+- Green: successful Tool calls and completed turns.
+- Yellow: explicit permission requests, denial, timeouts, output truncation,
+  and nonzero Bash command exit codes.
+- Red: Tool / Model / Turn failures, with a concise redacted error reason.
+- Dim gray: elapsed time, queue wait, and secondary details.
+
+Bash approvals display the **entire command** and working directory in an
+isolated permission panel, default to **No**, and report approval or denial.
+Do not approve a command you have not reviewed; this UI is **not a sandbox**.
+
+The renderer disables ANSI colors for redirected output and when `NO_COLOR`
+is set (or `TERM=dumb`), and respects `FORCE_COLOR=1` where supported.
+For a monochrome terminal:
+
+```bash
+NO_COLOR=1 pnpm dev:env
+```
+
+Terminal control sequences in untrusted paths, commands and streamed model
+text are removed before displaying them. Status text and approval previews
+are **terminal only**, and are not added to the model's context.
+The metadata-only JSONL recorder is unchanged.
+
 ### Local observability (metadata-only)
 
 The CLI logs model-step duration, tool execution duration, and Scheduler queue
@@ -815,3 +844,42 @@ OS 级沙箱、完整后代进程回收、工作区租约或远程副作用撤�
 这次修复提升诊断与恢复信息，并不保证模型永远不会幻觉工具名字，
 也没有增加 Context Compaction / Token Budget。需要本地复现后的
 具体错误信息才能确认实际 Provider 故障原因。
+
+
+---
+
+### 2026-10-21 — Terminal UI：状态、权限、错误和可读性
+
+**问题**
+
+原始终端把几乎所有状态写成 `[model:done]`、
+`[tool:start]`、`[tool:error]` 等同一视觉层级的文本，
+而 Bash 授权请求与普通日志混在一起。模型错误虽已能输出原因，
+但很难快速识别。更重要的是：Bash Tool 本身顺利执行完成
+不意味着所执行的 Shell 命令退出码为零。
+
+**实现与裁剪**
+
+- 新增 `src/cli/terminal-ui.ts`，把 CLI 的全部展示逻辑集中管理，
+  `src/index.ts` 不再手写分散的 console status 字符串。
+- 使用低干扰配色：青色执行过程、绿色完成、黄色授权及非正常 Shell
+  状态、红色错误、灰色辅助信息。输出保留清晰的空行和层次。
+- Bash approval 单独展示工作目录、完整命令与默认拒绝提示；结束后
+  另行反馈授权或拒绝。
+- 流式 Model 文本只写一个 Assistant 标题，切换到工具状态或错误前
+  自动处理最后一个换行；避免同一模型错误在 `model.failed`
+  和 `turn.failed` 重复长篇输出。
+- 原本 `tool.completed` 只表示 Tool 契约已完成，可能仍包含非零
+  Bash 退出码；UI 现在区分非零退出、timeout、输出截断与正常完成。
+- 非交互输出不写 ANSI；兼容 `NO_COLOR` 和 `TERM=dumb`。
+  untrusted command/path/model text 经过控制码过滤，防止终端控制序列
+  被误执行。保留既有 Provider 错误摘要脱敏。
+- 使用纯 Node ANSI 字符串实现，无额外 CLI 样式依赖，也没有引入
+  全屏 TUI 框架，保持当前 Agent 程序轻量。
+
+**验证**
+
+新增 `tests/terminal-ui.test.ts` 覆盖彩色/单色、
+权限区块、状态区分、控制码过滤、流式文本、错误去重、
+Bash 非零退出/timeout/截断。
+所有原有 Runtime、Scheduler、Process Tests 保持通过。

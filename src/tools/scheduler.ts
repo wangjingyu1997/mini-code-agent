@@ -4,11 +4,13 @@ import type {
   ToolExecutionResult,
   ToolOrchestrator,
 } from "./orchestrator";
-import { plansConflict } from "./resource";
+import { conservativeExecutionPlan, plansConflict } from "./resource";
+import { ResourceResolver, type ResourceResolverLike } from "./resource-resolver";
 import type { ToolContext } from "./tool";
 
 export type ToolSchedulerOptions = Readonly<{
   maxConcurrency?: number;
+  resourceResolver?: ResourceResolverLike;
 }>;
 
 type QueueReason = "concurrency_limit" | "resource_conflict" | "fifo_fairness";
@@ -27,8 +29,9 @@ type Batch = {
 type ScheduledTask = {
   readonly batch: Batch;
   readonly index: number;
-  readonly prepared: PreparedToolExecution;
+  prepared: PreparedToolExecution;
   readonly queuedAt: number;
+  ready: boolean;
   queueReason?: QueueReason;
 };
 
@@ -39,6 +42,7 @@ type ScheduledTask = {
  */
 export class ToolScheduler {
   private readonly maxConcurrency: number;
+  private readonly resourceResolver: ResourceResolverLike;
   private readonly queued: ScheduledTask[] = [];
   private readonly running = new Set<ScheduledTask>();
 
@@ -51,6 +55,7 @@ export class ToolScheduler {
       throw new RangeError("maxConcurrency must be a positive integer");
     }
     this.maxConcurrency = maxConcurrency;
+    this.resourceResolver = options.resourceResolver ?? new ResourceResolver();
   }
 
   async executeBatch(
@@ -77,15 +82,20 @@ export class ToolScheduler {
         onAbort: () => {},
       };
 
-      // Tool planning is synchronous. Register calls in invocation order,
-      // so independently arriving batches cannot reorder their queue entries.
+      // Reserve queue positions synchronously before any asynchronous
+      // realpath lookup. Unresolved earlier tasks block later tasks from
+      // overtaking them until their resource identity is known.
+      const tasks: ScheduledTask[] = [];
       for (const [index, call] of calls.entries()) {
-        this.queued.push({
+        const task: ScheduledTask = {
           batch,
           index,
           prepared: this.orchestrator.prepare(call, context),
           queuedAt: Date.now(),
-        });
+          ready: false,
+        };
+        this.queued.push(task);
+        tasks.push(task);
       }
 
       batch.onAbort = () => this.failBatch(
@@ -98,9 +108,32 @@ export class ToolScheduler {
       if (signal.aborted) {
         batch.onAbort();
       } else {
+        for (const task of tasks) {
+          void this.resolveTask(task);
+        }
         this.drain();
       }
     });
+  }
+
+  private async resolveTask(task: ScheduledTask): Promise<void> {
+    try {
+      const plan = await this.resourceResolver.resolve(task.prepared.plan);
+      if (task.batch.settled) return;
+      task.prepared = { ...task.prepared, plan };
+    } catch (error) {
+      if (task.batch.settled) return;
+      // Never execute a tool using an unverified path resource identity.
+      // Still return a normal isError tool result to the Agent Model.
+      task.prepared = {
+        call: task.prepared.call,
+        plan: conservativeExecutionPlan,
+        preparationError: error,
+      };
+    }
+
+    task.ready = true;
+    this.drain();
   }
 
   private dropQueuedTasks(batch: Batch): void {
@@ -141,9 +174,11 @@ export class ToolScheduler {
   private conflictsWithEarlierQueued(index: number): boolean {
     const candidate = this.queued[index]!;
     for (let i = 0; i < index; i += 1) {
-      // Earlier writers retain FIFO priority over later readers even
-      // when the writer itself is blocked by an already-running reader.
-      if (plansConflict(candidate.prepared.plan, this.queued[i]!.prepared.plan)) {
+      const earlier = this.queued[i]!;
+      // A resource identity still being resolved may conflict with ANY
+      // later task; do not let async completion order violate FIFO.
+      if (!earlier.ready) return true;
+      if (plansConflict(candidate.prepared.plan, earlier.prepared.plan)) {
         return true;
       }
     }
@@ -152,6 +187,7 @@ export class ToolScheduler {
 
   private canStart(index: number): boolean {
     const candidate = this.queued[index]!;
+    if (!candidate.ready) return false;
     if (this.running.size >= this.maxConcurrency) {
       candidate.queueReason = "concurrency_limit";
       return false;

@@ -564,3 +564,46 @@ GitHub Actions：TypeScript build PASS，48/48 自动化测试通过，
 不同 Scheduler 实例间也不共享状态。`workspacePathResource()`
 仍采用词法路径，符号链接别名和实际路径可能生成不同资源键；
 下一阶段要评估与 Pi 的 `realpath` 队列策略如何融合。
+
+
+---
+
+### 2026-10-21 — Resource Resolver: canonical paths and ordered async admission
+
+**问题**
+
+旧资源键只调用 `path.resolve()`，`src/index.ts` 与指向它的
+`alias.ts` 有不同的 Scheduler Resource Key，可能并发读写同一目标。
+
+**代码改造**
+
+1. 新增 `src/tools/resource-resolver.ts`：只对
+   `workspace:path:...` 声明调用异步 `fs.realpath()`；
+   `workspace:*` 等保守资源与非路径资源保持原语义。
+2. `Tool.plan()` 保持同步，不把文件系统 I/O 扩散给所有 Tool。
+3. Scheduler **先同步预留全部任务的排队位置**（`ready=false`），
+   再异步 Resolve；`canStart` 禁止未解析任务执行。
+4. 对早入队但仍在解析的任务，后来的 Task **不能抢先准入**，
+   避免由于解析完成速度不同打破 FIFO。
+5. 解析失败时不采用可能漏判冲突的词法路径；
+   改成保守 `workspace:*` 并作为 Tool 错误返回给 Model，
+   不执行该工具的副作用。
+6. 取消 Batch 会立刻移除仍在解析/排队的任务，
+   即使后续 `realpath` Promise 完成也不能重新执行已取消任务。
+
+**测试验证**
+
+`tests/resource-resolver.test.ts` 覆盖符号链接别名归一化、
+跨 Batch 别名读写冲突、独立文件并行、
+异步路径解析乱序、解析中取消与 ENOENT 失败关闭。
+GitHub Actions `pnpm test`：54/54 PASS（包含原有 48 项）。
+
+**边界与下一步**
+
+- 只对**同一个 Scheduler 实例**的合作工具有效，不是跨进程锁。
+- `realpath` 主要处理已存在文件的符号链接；硬链接、路径重定向
+  时序竞争、目录层次资源依赖和外部修改仍需专门设计。
+- 当前策略在较早任务仍解析资源时会短暂阻塞后续任务，
+  这是为 FIFO 与冲突安全做的保守取舍。
+- Tool 自身仍需要执行工作区越界检查、安全校验与正确的异步生命周期管理；
+  ResourceResolver 不能代替这些约束。

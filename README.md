@@ -607,3 +607,53 @@ GitHub Actions `pnpm test`：54/54 PASS（包含原有 48 项）。
   这是为 FIFO 与冲突安全做的保守取舍。
 - Tool 自身仍需要执行工作区越界检查、安全校验与正确的异步生命周期管理；
   ResourceResolver 不能代替这些约束。
+
+
+---
+
+### 2026-10-21 — ProcessSupervisor: foreground Bash ownership and cancellation
+
+**Why**
+
+The old Bash Tool waited directly on `child.close`. A command like
+`sleep 3 &` can leave inherited stdout/stderr open after the immediate shell
+exits, making the Tool wait unnecessarily. Conversely,
+`(sleep .4; echo late > file) >/dev/null 2>&1 &` can let `close` arrive while
+a same-process-group descendant is still able to modify the workspace.
+On cancellation, clearing a delayed SIGKILL timer at the shell's `close`
+could also leave SIGTERM-resistant descendants alive.
+
+**Implementation**
+
+1. Add `src/tools/process-supervisor.ts`; `bash.ts` retains input validation,
+   user approval, credential-filtered environment and model output serialization.
+2. Manage the direct Bash child and on Unix a separate process group.
+   Cancellation, timeout and output overflow request SIGTERM and schedule
+   SIGKILL escalation.
+3. Listen to `exit`, `close`, `stdout/stderr end`, and data events. After
+   immediate shell exit, wait for stream closure OR a bounded 100ms period of
+   output inactivity. Every post-exit data chunk restarts the timer.
+4. Enforce **foreground Tool semantics**: on completion, make a best-effort
+   SIGKILL request for any remaining members of the command's process group.
+   This also avoids clearing a SIGKILL escalation timer while a same-group
+   descendant continues running after the direct Bash child exits.
+5. `ProcessSupervisor.run()` does not settle early on AbortSignal itself;
+   it waits for the supervised command's termination/output finalization.
+   Scheduler preserves its workspace claim while that Promise is pending.
+6. Add deterministic tests for ordinary exit, inherited pipe waiting,
+   normal-return background writer cleanup, SIGTERM-resistant processes,
+   cancellation cleanup after the parent shell exits, already-aborted
+   execution, output truncation and Scheduler resource retention.
+
+**Boundaries**
+
+- Neither PID/process-group signalling nor stream completion proves all
+  *descendant* processes or side effects have ended. Descendants that call
+  `setsid()` or leave the group, background daemons and remote side effects
+  are not contained. On Windows, process-group cleanup semantics are weaker.
+- This is a best-effort **foreground command supervisor**, **not a sandbox**,
+  a full process-tree reaper, or a persistent background-task interface.
+  Commands intended to outlive a Tool require an explicit managed process
+  session and stronger isolation (future lessons).
+- `cleanup` cannot be advertised as globally confirmed merely because the
+  direct child emitted `exit` or `close`.

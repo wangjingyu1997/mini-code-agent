@@ -657,3 +657,58 @@ could also leave SIGTERM-resistant descendants alive.
   session and stronger isolation (future lessons).
 - `cleanup` cannot be advertised as globally confirmed merely because the
   direct child emitted `exit` or `close`.
+
+
+---
+
+### 2026-10-21 — Process Session Manager：长期进程的会话所有权
+
+**目标**
+
+一次性的 `ProcessSupervisor.run()` 在 Shell 完成后返回并做尽力进程组清理；
+长期运行的开发服务器（如 `npm run dev`）不能简单放在普通 Bash
+Tool 中，也不应该通过 `&` 悄悄逃离 Tool 生命周期。
+
+**代码**
+
+- 新增 `src/tools/process-session-manager.ts`，在 Runtime 进程内持有
+  Session ID -> child process 的显式映射，支持 `start` / `get` /
+  `list` / `read` / `terminate` / `forget` / `closeAll`。
+- `start()` 等待子进程真正完成 spawn，而**不等待进程退出**；
+  返回独立会话标识。默认一个 Manager 最多追踪 8 个会话
+  （包括未 forget 的已退出会话）。
+- 每个会话具有独立的 `status`（running、stopping、exited、failed）、
+  PID、启动时间、退出码、终止信号及 stopRequested 状态。
+- stdout/stderr 事件使用各自的 `StringDecoder`，避免
+  UTF-8 字符跨 Buffer 边界时产生乱码；
+  输出按 `sequence` 递增并作为有界环形历史（上限默认 256 条）
+  保存。调用 `read(id, fromSequence)` 得到增量输出、新游标，
+  以及因缓存淘汰导致的 `truncated` 提示。
+- `terminate()` 对受管理进程组先 SIGTERM 后 SIGKILL 兜底；
+  退出后处理输出流和空闲超时，避免被继承输出管道无限阻塞。
+  `closeAll()` 负责 Manager 停止服务时逐个终止并回收。
+- `forget()` 只允许删除已结束的会话，不能绕过 termination
+  直接丢弃活跃进程的管理句柄。
+
+**测试**
+
+`tests/process-session-manager.test.ts` 添加 8 个测试：
+启动立即返回、序号游标增量读取、历史输出有界淘汰、
+SIGTERM 无效后的 SIGKILL 终止、同进程组后台写入清理、
+`closeAll()` 回收、失败启动不污染会话表、退出后可读再 forget、
+运行中禁止 forget（测试共 8 项，其中部分生命周期行为合并验证）。
+GitHub Actions 全量 TypeScript 编译与 70/70 测试通过。
+
+**必须区分的边界**
+
+这次只提供**内部基础设施**，尚未注册成可由模型直接调用的 Tool，
+也未接入 `src/index.ts` 的交互式 Agent。
+
+原因：当 `start()` 返回时，进程仍然可以访问它的工作目录；
+但现有 `ToolScheduler` 只按照 Tool Promise 生命周期释放资源。
+若直接开放共享工作区的长驻进程工具，仍可能与后续 Patch/Bash
+操作并发产生副作用。正式上线需要独立 Worktree + 受控工作区租约，
+并逐步引入容器/OS 级进程与文件访问隔离。
+
+进程组 SIGKILL 是尽力终止，并不能阻止主动逃离进程组的后代、
+跨进程副作用或已经发送到远端的写入。

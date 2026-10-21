@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../contracts/tool";
 import type { Model } from "../model";
 import type { AgentMessage, ModelEvent, ModelRequest } from "../types";
 import { parseSseJson } from "../sse";
+import { rateLimitWaitMs, waitForRateLimit } from "../rate-limit";
 
 export type OpenAIResponsesModelOptions = Readonly<{
   apiKey: string;
@@ -9,6 +10,8 @@ export type OpenAIResponsesModelOptions = Readonly<{
   baseUrl?: string;
   instructions?: string;
   fetchImpl?: typeof fetch;
+  /** Additional HTTP attempts on rate limits, after the initial request. */
+  maxRateLimitRetries?: number;
 }>;
 
 type FunctionCallMetadata = {
@@ -86,6 +89,7 @@ export class OpenAIResponsesModel implements Model {
   private readonly baseUrl: string;
   private readonly instructions: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly maxRateLimitRetries: number;
 
   constructor(private readonly options: OpenAIResponsesModelOptions) {
     if (!options.apiKey.trim()) {
@@ -95,6 +99,11 @@ export class OpenAIResponsesModel implements Model {
       throw new Error("OpenAI model is required");
     }
 
+    const maxRetries = options.maxRateLimitRetries ?? 2;
+    if (!Number.isSafeInteger(maxRetries) || maxRetries < 0 || maxRetries > 5) {
+      throw new RangeError("maxRateLimitRetries must be an integer between 0 and 5");
+    }
+    this.maxRateLimitRetries = maxRetries;
     this.baseUrl = options.baseUrl ?? "https://api.openai.com/v1";
     this.instructions = options.instructions ?? [
       "You are a coding agent operating inside a local workspace.",
@@ -102,6 +111,8 @@ export class OpenAIResponsesModel implements Model {
       "Do not invent file contents or directory entries.",
       "Keep tool arguments minimal and valid according to their JSON schema.",
       "Use only the exact tool names provided in the tools array; do not invent names or namespace prefixes.",
+      "For broad repository searches, prefer a single targeted search using bash (with user approval) over repeatedly listing directories.",
+      "Read only relevant files; avoid repeating the same tool call without new evidence.",
       "Use bash only when needed; every shell command requires user approval.",
       "If a command is denied, do not retry it without a new user request.",
       "Never request or reveal API keys, credentials, or .env file contents.",
@@ -117,7 +128,7 @@ export class OpenAIResponsesModel implements Model {
       throw signal.reason ?? new Error("Model invocation aborted");
     }
 
-    const response = await this.fetchImpl(`${this.baseUrl}/responses`, {
+    const requestOptions: RequestInit = {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.options.apiKey}`,
@@ -132,15 +143,37 @@ export class OpenAIResponsesModel implements Model {
         stream: true,
       }),
       signal,
-    });
+    };
 
-    if (!response.ok) {
+    let response: Response;
+    for (let retries = 0; ; retries += 1) {
+      if (signal.aborted) throw signal.reason ?? new Error("Model invocation aborted");
+      response = await this.fetchImpl(`${this.baseUrl}/responses`, requestOptions);
+      if (response.ok) break;
+
       const body = await response.text();
       let payload: unknown = body.slice(0, 1200);
       try { payload = JSON.parse(body) as unknown; } catch { /* provider body may be plain text */ }
-      throw new Error(
-        `OpenAI Responses API failed (${response.status} ${response.statusText}): ${apiFailureDetail(payload)}`,
-      );
+      const detail = apiFailureDetail(payload);
+      if (response.status !== 429 || retries >= this.maxRateLimitRetries) {
+        throw new Error(
+          `OpenAI Responses API failed (${response.status} ${response.statusText}): ${detail}` +
+          (response.status === 429 && retries > 0
+            ? ` (after ${retries} rate-limit retries)`
+            : ""),
+        );
+      }
+
+      // The API rejected this request before SSE streaming began. Retrying
+      // cannot duplicate tool calls or partially streamed assistant text.
+      const waitMs = rateLimitWaitMs(response, detail, retries);
+      yield {
+        type: "rate_limit.retry",
+        attempt: retries + 1,
+        maxRetries: this.maxRateLimitRetries,
+        waitMs,
+      };
+      await waitForRateLimit(waitMs, signal);
     }
 
     if (!response.body) {

@@ -30,7 +30,7 @@ export type ProcessRunResult = Readonly<{
 }>;
 
 export class ProcessSupervisor {
-  private readonly options: ProcessSupervisorOptions;
+  private readonly options: Required<ProcessSupervisorOptions>;
 
   constructor(options: ProcessSupervisorOptions = {}) {
     // Match the previous public validation contract (including defaults).

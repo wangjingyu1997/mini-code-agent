@@ -60,6 +60,19 @@ function toOpenAITool(tool: ToolDefinition): Record<string, unknown> {
   };
 }
 
+function apiFailureDetail(payload: unknown): string {
+  if (typeof payload === "string") return payload.slice(0, 1200);
+  const outer = isRecord(payload) ? payload : {};
+  const error = isRecord(outer.error) ? outer.error : outer;
+  const code = typeof error.code === "string" ? error.code : undefined;
+  const message = typeof error.message === "string"
+    ? error.message
+    : typeof outer.message === "string"
+      ? outer.message
+      : "No provider error details";
+  return [code ? `[${code}]` : "", message.slice(0, 1200)].filter(Boolean).join(" ");
+}
+
 function parseArguments(raw: string, toolName: string): unknown {
   try {
     return JSON.parse(raw) as unknown;
@@ -88,6 +101,7 @@ export class OpenAIResponsesModel implements Model {
       "Use the provided tools when you need filesystem evidence.",
       "Do not invent file contents or directory entries.",
       "Keep tool arguments minimal and valid according to their JSON schema.",
+      "Use only the exact tool names provided in the tools array; do not invent names or namespace prefixes.",
       "Use bash only when needed; every shell command requires user approval.",
       "If a command is denied, do not retry it without a new user request.",
       "Never request or reveal API keys, credentials, or .env file contents.",
@@ -122,8 +136,10 @@ export class OpenAIResponsesModel implements Model {
 
     if (!response.ok) {
       const body = await response.text();
+      let payload: unknown = body.slice(0, 1200);
+      try { payload = JSON.parse(body) as unknown; } catch { /* provider body may be plain text */ }
       throw new Error(
-        `OpenAI Responses API failed (${response.status} ${response.statusText}): ${body}`,
+        `OpenAI Responses API failed (${response.status} ${response.statusText}): ${apiFailureDetail(payload)}`,
       );
     }
 
@@ -217,6 +233,20 @@ export class OpenAIResponsesModel implements Model {
             },
           };
           break;
+        }
+
+        case "response.failed": {
+          const responseState = isRecord(rawEvent.response) ? rawEvent.response : rawEvent;
+          throw new Error(`Responses API response.failed: ${apiFailureDetail(responseState)}`);
+        }
+
+        case "response.incomplete": {
+          const responseState = isRecord(rawEvent.response) ? rawEvent.response : {};
+          const details = isRecord(responseState.incomplete_details)
+            ? responseState.incomplete_details : {};
+          const reason = typeof details.reason === "string"
+            ? details.reason : "unknown reason";
+          throw new Error(`Responses API response.incomplete: ${reason}`);
         }
 
         case "response.completed":

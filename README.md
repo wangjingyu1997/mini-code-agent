@@ -771,3 +771,47 @@ GitHub Actions `pnpm test`：79/79 通过。
 并未把长期会话开放给模型，也未提供跨进程锁、
 OS 级沙箱、完整后代进程回收、工作区租约或远程副作用撤销。
 这些能力必须另行设计和验证。
+
+
+---
+
+### 2026-10-21 — 真实交互调试：未知工具名称与 Model Error 可观测性
+
+**实际故障**
+
+用户在本地请求汇总仓库使用的 Node.js API 时，模型首先生成未注册的
+`repo_browser.list_files`，Orchestrator 正常返回 `Unknown tool`；
+随后 `bash` 和 `read_file` 成功，但下一次模型调用显示
+`[model:error] Error` 并以 `[turn:failed]` 结束。
+
+**分析**
+
+- 模型没有遵循 Tool Registry 提供的工具名字；仓库实际使用 `list_files`。
+  未知工具返回的是 Tool 错误，不会让 Agent 立刻崩溃。
+- 下一步 Model 失败的根因**不能从现有终端摘要断言**：
+  CLI 只打印 `event.error.name`，完全省略 `event.error.message`。
+  可能是 Provider HTTP 400/429、上下文超限或流式响应失败，
+  需要真实错误信息进一步确定。
+- `read_file` 当前会返回完整的 UTF-8 文件内容；读取大型文件
+  可能增加后续模型请求的 Token 负担，后续需要做 Context Budget
+  和结果截断/按需读取设计。
+
+**小范围修复**
+
+1. CLI 的 `model.failed` / `turn.failed` 增加**仅终端展示**
+   的错误摘要（上限 900 字符，隐藏常见凭证样式）。
+   `JsonlEventRecorder` 继续仅记录脱敏元数据，不持久化
+   错误详情、模型文本和 Tool 输出。
+2. Provider Adapter 提取 HTTP 失败中的错误码与说明，
+   处理流式 `response.failed` / `response.incomplete`，
+   不再把明确的 Provider 失败误判为笼统的提前 EOF。
+3. System instructions 强调只能使用提供的工具精确名称，不允许虚构前缀；
+   Tool Registry 对未知工具返回当前可用工具列表以改善模型恢复。
+4. 增加有关 HTTP context 错误、流式失败、终止原因、凭证脱敏、
+   未知工具名恢复提示的回归测试。
+
+**边界与后续**
+
+这次修复提升诊断与恢复信息，并不保证模型永远不会幻觉工具名字，
+也没有增加 Context Compaction / Token Budget。需要本地复现后的
+具体错误信息才能确认实际 Provider 故障原因。

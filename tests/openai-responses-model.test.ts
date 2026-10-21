@@ -237,3 +237,50 @@ test("OpenAI adapter surfaces non-2xx API failures", async () => {
     /429 Too Many Requests/,
   );
 });
+
+
+test("OpenAI adapter reports nested provider error codes rather than opaque Error", async () => {
+  const fetchImpl: typeof fetch = async () => new Response(
+    JSON.stringify({ error: { code: "context_length_exceeded", message: "maximum context exceeded" } }),
+    { status: 400, statusText: "Bad Request" },
+  );
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model", fetchImpl,
+  });
+  await assert.rejects(
+    collect(model, baseRequest),
+    /400 Bad Request.*context_length_exceeded.*maximum context exceeded/,
+  );
+});
+
+test("OpenAI adapter rejects response.failed with the actual streaming error", async () => {
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => sseResponse([
+      {
+        type: "response.failed",
+        response: { status: "failed", error: { code: "rate_limit_exceeded", message: "retry later" } },
+      },
+    ]),
+  });
+  await assert.rejects(
+    collect(model, baseRequest),
+    /response.failed.*rate_limit_exceeded.*retry later/,
+  );
+});
+
+test("OpenAI adapter distinguishes incomplete output from transport termination", async () => {
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => sseResponse([
+      {
+        type: "response.incomplete",
+        response: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } },
+      },
+    ]),
+  });
+  await assert.rejects(
+    collect(model, baseRequest),
+    /response.incomplete: max_output_tokens/,
+  );
+});

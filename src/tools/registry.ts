@@ -14,7 +14,7 @@ export class ToolRegistry {
   get(name: string): Tool<any, any> {
     const tool = this.tools.get(name);
     if (!tool) {
-      throw new Error(`Unknown tool: ${name}`);
+      throw new Error(`Unknown tool: ${name}. Available tools: ${this.names().join(", ")}`);
     }
     return tool;
   }

@@ -883,3 +883,49 @@ OS 级沙箱、完整后代进程回收、工作区租约或远程副作用撤�
 权限区块、状态区分、控制码过滤、流式文本、错误去重、
 Bash 非零退出/timeout/截断。
 所有原有 Runtime、Scheduler、Process Tests 保持通过。
+
+
+---
+
+### 2026-10-21 — 真实 Groq TPM 429：有界自动重试与 Agent Token 效率
+
+**复现原因**
+
+真实 Groq `openai/gpt-oss-120b` 请求返回
+`HTTP 429 rate_limit_exceeded`，提示 TPM limit 8000、
+Used 5850、Requested 2354、`Please try again in 1.53s`。
+之前 Agent 连续多步调用 `list_files` 和 `read_file`，
+每轮 Model Request 都需要携带累积历史及 Tool 输出，
+因此用很少的工具执行时间也可能快速消耗分钟 Token 配额。
+
+**处理**
+
+- 新增 `src/model/rate-limit.ts`，解析 HTTP `Retry-After`
+  （秒或 HTTP 日期）以及 Groq 响应正文中以秒为单位的建议等待时间。
+  未提供提示时使用有限的指数退避；最长单次等待 30 秒。
+- `OpenAIResponsesModel` 对尚未开始 SSE 传输的 HTTP 429
+  默认最多自动重试两次，总请求次数不超过三次。
+  如果仍被限流，返回包含 Provider 原因的明确错误，
+  避免无限循环或递归重试。
+- 等待过程响应 `AbortSignal`，Ctrl+C 可以取消，不会强迫用户
+  等完整个后退避区间。HTTP 400/401 等其他状态直接报错。
+- 新增 `rate_limit.retry` ModelEvent 并映射为
+  `model.rate_limited` AgentEvent。终端展示黄色
+  `RATE LIMIT waiting …s · retry 1/2`，记录器只保存
+  尝试次数和等待毫秒数，不持久化完整错误文本或模型输入。
+- 重试发生在 HTTP 层 SSE 流**尚未开始之前**，不会在已输出文本
+  或已发出 Function Call 的 SSE 中途盲目重放请求，
+  避免重复工具执行和因果链断裂。
+- 补充系统指令：项目范围内的检索优先采取一次定向 Bash 搜索
+  （仍必须经过用户授权）而不是反复列目录；减少无信息增益的
+  重复工具调用。
+
+**边界**
+
+- 重试并不能提高 Groq 分配的 8000 TPM 配额，也不能保证再次
+  请求一定成功。随着时间窗口移动可能依然被 429 拒绝。
+- 目前还没有真正的 Token 预算器、Tool Output Budget、
+  Context Compaction、并发请求统一节流器或 Token 计量。
+  这些将作为独立的后续里程碑实现，不能靠无限重试替代。
+- API Key 保持在 `.env` 中，不纳入 Git；Terminal/JSONL 仍避免
+  保存明文密钥和完整错误消息。

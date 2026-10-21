@@ -74,6 +74,19 @@ export class TurnRunner {
           )) {
             this.consumeModelEvent(event, assistantText, toolCalls);
   
+            if (event.type === "rate_limit.retry") {
+              await this.events.emit({
+                type: "model.rate_limited",
+                sessionId: session.id,
+                turnId,
+                stepId,
+                attempt: event.attempt,
+                maxRetries: event.maxRetries,
+                waitMs: event.waitMs,
+                at: Date.now(),
+              });
+            }
+
             if (event.type === "text.delta") {
               await this.events.emit({
                 type: "model.text.delta",

@@ -50,4 +50,5 @@ export type ModelEvent =
     }>
   | Readonly<{
       type: "response.completed";
-    }>;
+    }>
+  | Readonly<{ type: "rate_limit.retry"; attempt: number; maxRetries: number; waitMs: number }>;

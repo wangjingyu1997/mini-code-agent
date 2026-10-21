@@ -131,3 +131,12 @@ test("Bash exit failures, timeouts and truncated output are warned, not shown as
   assert.match(s, /⚠ FINISHED bash · output truncated/);
   assert.match(s, /✓ DONE bash/);
 });
+
+
+test("rate-limit retry is visibly a warning, not a model failure", () => {
+  const { ui, output } = setup({ color: false });
+  ui.handle({ ...base, type: "model.rate_limited", stepId: "t:1", attempt: 1, maxRetries: 2, waitMs: 1630 });
+  assert.match(output(), /RATE LIMIT/);
+  assert.match(output(), /waiting 1\.63s/);
+  assert.match(output(), /retry 1\/2/);
+});

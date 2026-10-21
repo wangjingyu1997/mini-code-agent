@@ -42,6 +42,10 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
       record.errorType = safeName(event.error.name);
       if (event.type === "model.failed") record.durationMs = event.durationMs;
       break;
+    case "model.rate_limited":
+      record.retryAttempt = event.attempt;
+      record.waitMs = event.waitMs;
+      break;
     case "model.completed":
       record.durationMs = event.durationMs;
       record.textChars = event.textChars;

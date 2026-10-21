@@ -20,6 +20,16 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "model.rate_limited";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      attempt: number;
+      maxRetries: number;
+      waitMs: number;
+      at: number;
+    }>
+  | Readonly<{
       type: "model.completed";
       sessionId: string;
       turnId: string;

@@ -72,6 +72,7 @@ export class ProcessController {
   private stdoutEnded = false;
   private stderrEnded = false;
   private timedOut = false;
+  private executionError?: Error;
   private escalationTimer?: NodeJS.Timeout;
   private idleTimer?: NodeJS.Timeout;
   private timeoutTimer?: NodeJS.Timeout;
@@ -112,11 +113,15 @@ export class ProcessController {
     };
     const onError = (error: Error) => {
       if (!startSeen) {
-        // A failed spawn has no usable child. Callers awaiting started will
-        // observe the error; finished always settles so shutdown cannot hang.
+        // There is no running process after a failed spawn.
         rejectStart(error);
+        finalize(error);
+      } else {
+        // Do not release the supervisor's lifetime while a spawned process
+        // might still run: request termination and wait for exit/close.
+        this.executionError = error;
+        this.requestStop();
       }
-      finalize(error);
     };
     const armIdle = () => {
       if (this.idleTimer) clearTimeout(this.idleTimer);
@@ -154,10 +159,10 @@ export class ProcessController {
       try {
         options.onOutput?.(stream, chunk);
       } catch (error) {
-        // A broken output consumer should not crash the event loop or orphan
-        // the process. Stop the child then report the collection failure.
+        // A broken output collector must not release Scheduler claims early.
+        // Stop the process, but wait for its managed lifecycle to finish.
+        this.executionError = error instanceof Error ? error : new Error(String(error));
         this.requestStop();
-        finalize(error instanceof Error ? error : new Error(String(error)));
         return;
       }
       if (this.exitSeen && !this.settled) armIdle();
@@ -190,7 +195,7 @@ export class ProcessController {
         timedOut: this.timedOut,
         stopRequested: this.stopping,
         durationMs: Date.now() - this.startedAt,
-        ...(error ? { error } : {}),
+        ...((error ?? this.executionError) ? { error: (error ?? this.executionError)! } : {}),
       });
     };
 

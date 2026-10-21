@@ -82,3 +82,16 @@ test("JSONL write failures are observable on flush", async (t) => {
   recorder.record({ ...base, type: "turn.completed", answer: "done" });
   await assert.rejects(() => recorder.flush());
 });
+
+
+test("rate-limit retry log stores only timing metadata and never the provider body", () => {
+  const event: AgentEvent = {
+    ...base, type: "model.rate_limited", stepId: "step-1",
+    attempt: 1, maxRetries: 2, waitMs: 1630,
+  };
+  const record = toSafeEventLogRecord(event);
+  assert.equal(record?.type, "model.rate_limited");
+  assert.equal(record?.retryAttempt, 1);
+  assert.equal(record?.waitMs, 1630);
+  assert.equal(record && "message" in record, false);
+});

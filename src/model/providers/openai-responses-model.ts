@@ -61,6 +61,7 @@ function toOpenAITool(tool: ToolDefinition): Record<string, unknown> {
 }
 
 function apiFailureDetail(payload: unknown): string {
+  if (typeof payload === "string") return payload.slice(0, 1200);
   const outer = isRecord(payload) ? payload : {};
   const error = isRecord(outer.error) ? outer.error : outer;
   const code = typeof error.code === "string" ? error.code : undefined;
@@ -138,7 +139,7 @@ export class OpenAIResponsesModel implements Model {
       let payload: unknown = body.slice(0, 1200);
       try { payload = JSON.parse(body) as unknown; } catch { /* provider body may be plain text */ }
       throw new Error(
-        `Responses API HTTP ${response.status} ${response.statusText}: ${apiFailureDetail(payload)}`,
+        `OpenAI Responses API failed (${response.status} ${response.statusText}): ${apiFailureDetail(payload)}`,
       );
     }
 

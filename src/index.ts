@@ -15,11 +15,12 @@ import { applyPatchTool } from "./tools/tools/apply-patch";
 import { applyPatchSetTool } from "./tools/tools/apply-patch-set";
 import { createBashTool } from "./tools/tools/bash";
 import { listFilesTool } from "./tools/tools/list-files";
-import { formatDiagnostic } from "./events/diagnostics";
+import { TerminalUI } from "./cli/terminal-ui";
 import { readFileTool } from "./tools/tools/read-file";
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input, output });
+  const ui = new TerminalUI(output);
   const events = new EventBus();
   const store = new InMemoryEventStore();
   const recorder = new JsonlEventRecorder(
@@ -33,13 +34,14 @@ async function main(): Promise<void> {
   registry.register(applyPatchSetTool);
   registry.register(createBashTool({
     approve: async ({ command, cwd }, signal) => {
-      output.write("\n[bash approval] Working directory: " + cwd + "\n");
-      output.write("[bash approval] Command:\n" + command + "\n");
+      ui.approvalRequest(command, cwd);
       try {
-        const answer = await rl.question("Allow this command? [y/N] ", { signal });
-        return answer.trim().toLowerCase() === "y" ||
-          answer.trim().toLowerCase() === "yes";
+        const answer = await rl.question(ui.permissionPrompt(), { signal });
+        const allowed = ["y", "yes"].includes(answer.trim().toLowerCase());
+        ui.approvalResult(allowed);
+        return allowed;
       } catch {
+        ui.approvalResult(false);
         return false;
       }
     },
@@ -52,41 +54,16 @@ async function main(): Promise<void> {
   const runtime = new AgentRuntime(runner, events, store);
   const session = runtime.createSession(process.cwd());
 
-  events.subscribe((event) => {
-    if (event.type === "model.text.delta") {
-      output.write(event.delta);
-    }
-    if (event.type === "model.completed") {
-      output.write(`\n[model:done] ${event.durationMs}ms, calls=${event.toolCallCount}\n`);
-    }
-    if (event.type === "model.failed") {
-      output.write(`\n[model:error] ${event.error.name}: ${formatDiagnostic(event.error.message)} (${event.durationMs}ms)\n`);
-    }
-    if (event.type === "turn.failed") {
-      output.write(`[turn:error] ${event.error.name}: ${formatDiagnostic(event.error.message)}\n`);
-    }
-    if (event.type === "tool.started") {
-      const wait = event.queueWaitMs > 0
-        ? ` waited=${event.queueWaitMs}ms${event.queueReason ? ` reason=${event.queueReason}` : ""}`
-        : "";
-      output.write(`\n[tool:start] ${event.toolName}${wait}\n`);
-    }
-    if (event.type === "tool.completed") {
-      output.write(`[tool:done] ${event.toolName} ${event.durationMs}ms\n`);
-    }
-    if (event.type === "tool.failed") {
-      output.write(`[tool:error] ${event.toolName}: ${event.error.message} (${event.durationMs}ms)\n`);
-    }
-  });
+  events.subscribe((event) => ui.handle(event));
 
   const provider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
-  output.write("mini-code-agent v0.4-dev [provider=" + provider + "]\n输入 exit 退出。\n\n");
+  ui.banner(provider, process.cwd());
 
   try {
     while (true) {
       let prompt: string;
       try {
-        prompt = await rl.question("> ");
+        prompt = await rl.question(ui.prompt());
       } catch {
         // EOF or a closed terminal ends the interactive session.
         break;
@@ -106,11 +83,8 @@ async function main(): Promise<void> {
 
       try {
         const result = await runtime.runTurn(session, prompt, controller.signal);
-        if (result.type !== "completed") {
-          output.write("\n[turn:" + result.type + "]\n");
-        } else {
-          output.write("\n");
-        }
+        // turn.completed / turn.failed / turn.aborted are rendered by TerminalUI.
+        if (result.type === "max_steps") ui.maxSteps(result.steps);
       } finally {
         rl.removeListener("SIGINT", onSigint);
         process.removeListener("SIGINT", onSigint);

@@ -103,3 +103,41 @@ test("requestStop is idempotent and controller reports one terminal outcome", {
   assert.equal(exit.stopRequested, true);
   controller.requestStop();
 });
+
+
+test("capped capture does not retain the caller's mutable Buffer storage", () => {
+  const output = new ProcessOutputBuffer({ maxOutputBytes: 3 });
+  const source = Buffer.from("abcdef");
+  assert.equal(output.append("stdout", source), true);
+  source.fill(0);
+  assert.equal(output.capture().stdout, "abc");
+});
+
+test("an output-consumer error requests termination but keeps ownership until process exit", {
+  skip: process.platform === "win32" ? "Unix cancellation escalation" : false,
+}, async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "mini-agent-controller-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let outputArrived = false;
+  const controller = new ProcessController({
+    command: "trap '' TERM; printf ready; while :; do sleep 0.05; done",
+    cwd, env: process.env,
+    terminationGraceMs: 200,
+    onOutput: () => {
+      outputArrived = true;
+      throw new Error("output sink failed");
+    },
+  });
+  await controller.started;
+  let settled = false;
+  void controller.finished.then(() => { settled = true; });
+  for (let i = 0; i < 100 && !outputArrived; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(outputArrived, true);
+  await new Promise<void>((resolve) => setTimeout(resolve, 40));
+  assert.equal(settled, false, "ownership cannot be released merely because the output consumer threw");
+  const outcome = await controller.finished;
+  assert.match(outcome.error?.message ?? "", /output sink failed/);
+  assert.equal(outcome.stopRequested, true);
+});

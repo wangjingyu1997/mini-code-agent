@@ -11,6 +11,7 @@ import type { TurnTerminalState } from "./state";
 
 export type TurnRunnerOptions = Readonly<{
   maxSteps?: number;
+  contextBudget?: number;
 }>;
 
 export class TurnRunner {

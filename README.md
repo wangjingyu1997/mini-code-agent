@@ -929,3 +929,5 @@ Used 5850、Requested 2354、`Please try again in 1.53s`。
   这些将作为独立的后续里程碑实现，不能靠无限重试替代。
 - API Key 保持在 `.env` 中，不纳入 Git；Terminal/JSONL 仍避免
   保存明文密钥和完整错误消息。
+
+<!-- Agent observability implementation in progress -->

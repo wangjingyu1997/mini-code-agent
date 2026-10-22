@@ -172,7 +172,13 @@ export class TerminalUI {
       }
       case "model.completed":
         this.closeStreamingText();
-        if (event.toolCallCount > 0) {
+        if (event.usage) {
+          this.line(this.style("↙ MODEL", "cyan") + " " +
+            this.style("actual tokens: " + event.usage.inputTokens + " in / " +
+              event.usage.outputTokens + " out · " +
+              event.toolCallCount + " calls · " + event.durationMs + "ms", "dim"));
+        }
+        if (event.toolCallCount > 0 && !event.usage) {
           this.line(this.style("↳", "dim") + " " +
             this.style(event.toolCallCount + " tool request" +
               (event.toolCallCount === 1 ? "" : "s") + " · " + event.durationMs + "ms", "dim"));

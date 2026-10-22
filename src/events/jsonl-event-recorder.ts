@@ -46,6 +46,18 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
       record.retryAttempt = event.attempt;
       record.waitMs = event.waitMs;
       break;
+    case "model.request.prepared":
+      record.messageCount = event.messageCount;
+      record.toolCount = event.toolCount;
+      record.estimatedTokens = event.estimatedTokens;
+      record.originalEstimatedTokens = event.originalEstimatedTokens;
+      record.droppedMessages = event.droppedMessages;
+      record.compacted = event.compacted;
+      break;
+    case "tool.output.budgeted":
+      record.originalChars = event.originalChars;
+      record.forwardedChars = event.forwardedChars;
+      break;
     case "model.completed":
       record.durationMs = event.durationMs;
       record.textChars = event.textChars;

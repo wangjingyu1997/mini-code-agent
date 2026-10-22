@@ -218,7 +218,13 @@ export class TurnRunner {
         }
 
         const loopDetected = loopGuard.observe(toolCalls, results);
-        if (loopDetected) forceFinalAnswer = true;
+        if (loopDetected) {
+          forceFinalAnswer = true;
+          await this.events.emit({
+            type: "turn.loop_detected", sessionId: session.id,
+            turnId, stepId, at: Date.now(),
+          });
+        }
 
         for (const result of results) {
           const content = boundToolOutput(result.content, this.maxToolOutputChars);

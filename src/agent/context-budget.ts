@@ -60,7 +60,8 @@ function contextUnits(history: readonly AgentMessage[]): Unit[] {
 
     const ids = new Set(calls.map((c) => c.role === "assistant_tool_call" ? c.callId : ""));
     const outputIds = new Set(outputs.map((m) => m.role === "tool" ? m.callId : ""));
-    if (ids.size === calls.length && ids.size === outputIds.size &&
+    if (ids.size === calls.length && outputs.length === calls.length &&
+        ids.size === outputIds.size &&
         [...ids].every((id) => outputIds.has(id))) {
       const messages = [...calls, ...outputs];
       units.push({ messages, size: estimateTokens(messages) });

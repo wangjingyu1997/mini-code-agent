@@ -22,7 +22,7 @@ export class ToolLoopGuard {
   private readonly evidence = new Map<string, string>();
   private consecutiveRepeats = 0;
 
-  constructor(private readonly maxStaleReads = 3) {
+  constructor(private readonly maxStaleReads = 2) {
     if (!Number.isInteger(maxStaleReads) || maxStaleReads < 1) {
       throw new RangeError("maxStaleReads must be a positive integer");
     }

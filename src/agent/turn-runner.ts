@@ -60,6 +60,17 @@ export class TurnRunner {
         const context = buildContext(session.history, { maxEstimatedTokens: this.budget }, definitions);
         const modelStartedAt = Date.now();
         await this.events.emit({
+          type: "model.request.prepared",
+          sessionId: session.id, turnId, stepId,
+          messageCount: context.messages.length,
+          toolCount: definitions.length,
+          estimatedTokens: context.estimatedTokens,
+          originalEstimatedTokens: context.originalEstimatedTokens,
+          droppedMessages: context.droppedMessages,
+          compacted: context.compacted,
+          at: Date.now(),
+        });
+        await this.events.emit({
           type: "model.started",
           sessionId: session.id,
           turnId,

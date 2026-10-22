@@ -9,6 +9,7 @@ export type TerminalWriter = {
 
 export type TerminalUIOptions = Readonly<{
   color?: boolean;
+  verbose?: boolean;
   env?: Readonly<Record<string, string | undefined>>;
 }>;
 

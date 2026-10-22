@@ -96,7 +96,10 @@ export function buildContext(
       : m,
   );
   const units = contextUnits(capped);
-  const latestUserIndex = capped.findLastIndex((m) => m.role === "user");
+  let latestUserIndex = -1;
+  for (let i = capped.length - 1; i >= 0; i--) {
+    if (capped[i]?.role === "user") { latestUserIndex = i; break; }
+  }
   const selected = new Set<number>();
   let used = 0;
 

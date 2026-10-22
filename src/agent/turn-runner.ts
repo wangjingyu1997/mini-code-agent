@@ -199,11 +199,22 @@ export class TurnRunner {
         }
 
         for (const result of results) {
+          const content = boundToolOutput(result.content);
+          if (content.length < result.content.length) {
+            await this.events.emit({
+              type: "tool.output.budgeted",
+              sessionId: session.id, turnId, stepId,
+              callId: result.callId, toolName: result.toolName,
+              originalChars: result.content.length,
+              forwardedChars: content.length,
+              at: Date.now(),
+            });
+          }
           session.append({
             role: "tool",
             callId: result.callId,
             toolName: result.toolName,
-            content: result.content,
+            content,
             isError: result.isError,
           });
         }

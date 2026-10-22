@@ -56,6 +56,8 @@ export class TurnRunner {
         const assistantText: string[] = [];
         const toolCalls: ToolCall[] = [];
 
+        const definitions = this.tools.definitions();
+        const context = buildContext(session.history, { maxEstimatedTokens: this.budget }, definitions);
         const modelStartedAt = Date.now();
         await this.events.emit({
           type: "model.started",
@@ -71,8 +73,8 @@ export class TurnRunner {
               sessionId: session.id,
               turnId,
               stepId,
-              messages: [...session.history],
-              tools: this.tools.definitions(),
+              messages: context.messages,
+              tools: definitions,
             },
             signal,
           )) {

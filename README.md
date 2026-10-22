@@ -930,4 +930,17 @@ Used 5850、Requested 2354、`Please try again in 1.53s`。
 - API Key 保持在 `.env` 中，不纳入 Git；Terminal/JSONL 仍避免
   保存明文密钥和完整错误消息。
 
-<!-- Agent observability implementation in progress -->
+
+
+
+### 2026-10-22 — Model tracing and context budgets
+
+- `search_code`: bounded read-only literal code search in `src` or `tests`. It returns matching paths and lines without repeatedly calling `list_files`.
+- Each model step now reports approximate input tokens, message count, tool count and compaction status. Provider-reported input/output tokens are shown separately when present.
+- `AGENT_INPUT_TOKEN_BUDGET=3000` (estimated per request) and `AGENT_TOOL_OUTPUT_CHARS=5000` limit growth of context sent to the provider. Estimates are **not** the same as provider token accounting or Groq's per-minute TPM rate limit.
+- Deterministic, lossy compaction drops older complete function-call/result batches together; `Session.history` remains untouched. Omitted evidence is **not** replaced by fabricated code summaries.
+- Opt into complete local JSONL tracing with `AGENT_TRACE=1 pnpm dev:env`. The file is `.mini-code-agent/logs/raw-trace.jsonl`, excluded by Git. It records outbound HTTP JSON payloads (without authorization headers), response status/SSE and Tool events. **This file can contain source code, prompts, command arguments and secrets; never share it publicly.**
+- Default `events.jsonl` remains metadata-only, without raw prompt/response/tool content. The terminal prints short per-step request and Tool summaries.
+- Transport errors such as `TypeError: fetch failed` now report the underlying cause when available. This is distinct from HTTP 429, 400 context errors and SSE errors. No automatic retry of uncertain transport failures is claimed.
+
+These are pragmatic initial limits, **not** exact tokenizer-driven budgeting, semantic LLM compaction, OS sandboxing or guaranteed resolution of network faults. Long-lived multi-turn memory and provider-wide rate-limit scheduling need dedicated follow-up work.

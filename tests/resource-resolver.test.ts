@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -99,7 +99,9 @@ test("realpath resolver maps symlink and target to the same resource key", async
     risk: "read",
   });
   assert.equal(a.resources[0]!.key, b.resources[0]!.key);
-  assert.equal(a.resources[0]!.key, workspacePathResource(cwd, "target.ts"));
+  // On macOS, os.tmpdir() commonly starts with /var while realpath() resolves
+  // it through /private/var. Resource claims deliberately use physical paths.
+  assert.equal(a.resources[0]!.key, "workspace:path:" + await realpath(path.join(cwd, "target.ts")));
 });
 
 test("symlink-alias read and write cannot run concurrently across batches", async (t) => {

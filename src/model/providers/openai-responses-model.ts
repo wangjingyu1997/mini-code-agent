@@ -143,8 +143,12 @@ export class OpenAIResponsesModel implements Model {
           ? this.instructions + " Tool calling is disabled because the previous tool calls made no new progress. Give the best possible final answer now using the available evidence, and state any limits. Do not invent missing source evidence."
           : this.instructions,
         input: toOpenAIInput(request.messages),
-        tools: request.tools.map(toOpenAITool),
-        tool_choice: request.tools.length === 0 ? "none" : "auto",
+        // Some providers reject "tool_choice: none" after a tool-heavy
+        // conversation if the model still attempts a tool call. For a
+        // text-only request, omit BOTH tool definitions and tool_choice.
+        ...(request.tools.length > 0
+          ? { tools: request.tools.map(toOpenAITool), tool_choice: "auto" }
+          : {}),
         stream: true,
       }),
       signal,

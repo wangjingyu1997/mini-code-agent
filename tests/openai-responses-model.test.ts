@@ -427,8 +427,8 @@ test("final answer mode disables provider tool selection", async () => {
     },
   });
   const events = await collect(model, { ...baseRequest, tools: [] });
-  assert.equal(body.tool_choice, "none");
-  assert.deepEqual(body.tools, []);
+  assert.equal("tool_choice" in body, false);
+  assert.equal("tools" in body, false);
   assert.match(String(body.instructions), /Give the best possible final answer/);
   assert.ok(events.some(event => event.type === "text.delta"));
 });

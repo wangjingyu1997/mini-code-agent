@@ -132,6 +132,29 @@ export class TerminalUI {
       case "turn.started":
         this.reportedModelFailureTurnId = undefined;
         break;
+      case "model.request.prepared":
+        this.closeStreamingText();
+        this.line(this.style("↗ MODEL", "cyan") + " " +
+          this.style("~" + event.estimatedTokens + " tokens (estimated) · " +
+            event.messageCount + " messages · " + event.toolCount + " tools", "dim"));
+        if (event.compacted) {
+          this.line(this.style("  ⚠ CONTEXT", "yellow") + " " +
+            this.style(event.droppedMessages + " messages compacted or output trimmed", "dim"));
+        }
+        break;
+      case "tool.requested":
+        this.closeStreamingText();
+        this.line(this.style("  ↗ CALL", "cyan") + " " + this.style(event.toolName, "bold") +
+          this.style(" · args: " +
+            (event.input && typeof event.input === "object"
+              ? Object.keys(event.input).slice(0, 8).join(", ") || "(none)" : "(scalar)"), "dim"));
+        break;
+      case "tool.output.budgeted":
+        this.closeStreamingText();
+        this.line(this.style("  ⚠ OUTPUT", "yellow") + " " +
+          this.style(event.toolName + " · " + event.originalChars + " → " +
+            event.forwardedChars + " chars forwarded to model", "dim"));
+        break;
       case "model.started":
         this.closeStreamingText();
         this.line(this.style("◌", "cyan") + " " + this.style("Thinking…", "dim"));

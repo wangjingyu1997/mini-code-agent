@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildContext, boundToolOutput } from "./context-budget";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
@@ -16,6 +17,7 @@ export type TurnRunnerOptions = Readonly<{
 
 export class TurnRunner {
   private readonly maxSteps: number;
+  private readonly budget: number;
 
   constructor(
     private readonly model: Model,
@@ -25,6 +27,7 @@ export class TurnRunner {
     options: TurnRunnerOptions = {},
   ) {
     this.maxSteps = options.maxSteps ?? 20;
+    this.budget = options.contextBudget ?? 3000;
   }
 
   async run(

@@ -61,6 +61,7 @@ export type AgentEvent =
       durationMs: number;
       toolCallCount: number;
       textChars: number;
+      usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
       at: number;
     }>
   | Readonly<{

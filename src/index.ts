@@ -18,6 +18,7 @@ import { listFilesTool } from "./tools/tools/list-files";
 import { TerminalUI } from "./cli/terminal-ui";
 import { RawTraceRecorder } from "./observability/raw-trace-recorder";
 import { readFileTool } from "./tools/tools/read-file";
+import { searchCodeTool } from "./tools/tools/search-code";
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input, output });

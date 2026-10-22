@@ -997,3 +997,57 @@ must survive a budget reduction.
   is a separate future enhancement.
 - No live end-to-end Groq request is performed by the unit tests; protocol
   compatibility and overall final-answer quality must be verified locally.
+
+
+---
+
+### 2026-10-22 — macOS canonical path regression + Groq no-tools finalization incident
+
+**Reported symptoms**
+
+1. Local macOS test "realpath resolver maps symlink and target to the same
+   resource key" failed: OS temp path `/var/folders/...` vs canonical
+   `/private/var/folders/...`.
+2. On a repeated `search_code` / `read_file` loop, the Agent attempted a
+   no-tools final response but Groq returned `tool_use_failed` with
+   `Tool choice is none, but model called a tool`.
+
+**Trace-grounded analysis**
+
+The final model request was still a 10-message conversation with
+`function_call` / `function_call_output` history and explicit
+`tools: []` + `tool_choice: "none"`. Groq rejected that combination
+when the model nevertheless emitted a tool call. Source search, `read_file`,
+Scheduler and Tool Registry had completed successfully; the HTTP 400 was
+in **final-answer recovery**, not filesystem tooling.
+
+**Fixes**
+
+- ResourceResolver production code stays unchanged: it correctly uses
+  `realpath` to unify path aliases. The **test** now compares against
+  `realpath(target.ts)` rather than an unresolved lexical path, so it also
+  works on macOS `/var` -> `/private/var`.
+- Add `buildFinalAnswerContext`: construct a new single text-only request
+  from the most recent user goal and **deduplicated, bounded** successful
+  read-only Tool evidence. Prioritize `search_code` results to retain the
+  source import inventory, avoid leaking unrelated earlier turns, and do not
+  replay historical function-call messages in this recovery request.
+- For text-only calls, the Responses adapter omits both `tools` and
+  `tool_choice` instead of sending `tools: []` with
+  `tool_choice: "none"`. Normal Tool calls still use
+  `tool_choice: "auto"`.
+- `ToolLoopGuard` moves to finalization after **two** consecutive repeated
+  read-only outputs by default (previously three). Emit
+  `turn.loop_detected` so the operator and metadata recorder see the
+  explicit transition.
+- Add regression tests for macOS canonical key semantics, final request
+  payload, no orphan call history, evidence retention/deduplication, input
+  budget, and early loop recovery.
+
+**Limits**
+
+This avoids the observed explicit `tool_choice:none` protocol error, but
+does not guarantee a Groq model will return a complete, correct answer.
+Context compaction remains lossy, finalization is a safety fallback rather
+than a real task-progress memory, and HTTP requests still consume Groq TPM.
+Review any opt-in raw trace locally because it may contain source and secrets.

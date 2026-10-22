@@ -31,6 +31,9 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
     case "turn.started":
       record.inputChars = event.input.length;
       break;
+    case "turn.loop_detected":
+      record.status = "finalizing_after_stale_reads";
+      break;
     case "turn.max_steps":
       record.steps = event.steps;
       break;

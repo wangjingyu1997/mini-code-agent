@@ -373,3 +373,42 @@ test("provider rejects out-of-range retry policy", () => {
     /maxRateLimitRetries/,
   );
 });
+
+
+test("Responses adapter records actual server token usage when supplied", async () => {
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => sseResponse([
+      { type: "response.completed", response: {
+        usage: { input_tokens: 120, output_tokens: 37, total_tokens: 157 },
+      } },
+    ]),
+  });
+  assert.deepEqual(await collect(model, baseRequest), [{
+    type: "response.completed",
+    usage: { inputTokens: 120, outputTokens: 37, totalTokens: 157 },
+  }]);
+});
+
+test("network failures include their original transport cause", async () => {
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async () => {
+      throw new TypeError("fetch failed", { cause: new Error("ECONNRESET") });
+    },
+  });
+  await assert.rejects(collect(model, baseRequest), /network request failed.*ECONNRESET/i);
+});
+
+test("raw trace captures outgoing JSON and incoming SSE without storing Authorization header", async () => {
+  const trace: Array<{ type: string; data: unknown }> = [];
+  const model = new OpenAIResponsesModel({
+    apiKey: "do-not-log-this-secret", model: "test-model",
+    trace: { record(type, data) { trace.push({ type, data }); } },
+    fetchImpl: async () => sseResponse([{ type: "response.completed" }]),
+  });
+  await collect(model, baseRequest);
+  assert.deepEqual(trace.map(x => x.type), ["http.request", "http.status", "http.sse"]);
+  assert.doesNotMatch(JSON.stringify(trace), /do-not-log-this-secret/);
+  assert.match(JSON.stringify(trace[0]), /read_file/);
+});

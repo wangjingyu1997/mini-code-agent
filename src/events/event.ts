@@ -13,6 +13,30 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "model.request.prepared";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      messageCount: number;
+      toolCount: number;
+      estimatedTokens: number;
+      originalEstimatedTokens: number;
+      droppedMessages: number;
+      compacted: boolean;
+      at: number;
+    }>
+  | Readonly<{
+      type: "tool.output.budgeted";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      callId: string;
+      toolName: string;
+      originalChars: number;
+      forwardedChars: number;
+      at: number;
+    }>
+  | Readonly<{
       type: "model.started";
       sessionId: string;
       turnId: string;

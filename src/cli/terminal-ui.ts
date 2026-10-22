@@ -237,6 +237,11 @@ export class TerminalUI {
           this.style("· " + event.durationMs + "ms", "dim"));
         this.line("  " + safeTerminalText(formatDiagnostic(event.error.message)));
         break;
+      case "turn.loop_detected":
+        this.closeStreamingText();
+        this.line(this.style("⚠ REPEATED READS", "yellow") + " " +
+          this.style("No new evidence · preparing a text-only final answer", "dim"));
+        break;
       case "turn.max_steps":
         this.maxSteps(event.steps);
         break;

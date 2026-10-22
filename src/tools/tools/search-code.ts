@@ -48,6 +48,7 @@ export const searchCodeTool: Tool<SearchCodeInput, SearchCodeResult> = {
   async execute(input, context, signal) {
     const root = await realpath(context.cwd);
     const base = path.join(root, input.path);
+    if ((await realpath(base)) !== base) throw new Error("Symlinked search directory denied");
     const files: string[] = [];
     const stack = [base];
 

@@ -125,6 +125,13 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "turn.loop_detected";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      at: number;
+    }>
+  | Readonly<{
       type: "turn.max_steps";
       sessionId: string;
       turnId: string;

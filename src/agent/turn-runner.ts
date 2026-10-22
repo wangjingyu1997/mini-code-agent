@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { buildContext, boundToolOutput } from "./context-budget";
+import { ToolLoopGuard } from "./tool-loop-guard";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
@@ -39,6 +40,8 @@ export class TurnRunner {
     signal: AbortSignal,
   ): Promise<TurnTerminalState> {
     const turnId = randomUUID();
+    const loopGuard = new ToolLoopGuard();
+    let forceFinalAnswer = false;
     session.append({ role: "user", content: input });
 
     await this.events.emit({
@@ -60,7 +63,7 @@ export class TurnRunner {
         const toolCalls: ToolCall[] = [];
         let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
-        const definitions = this.tools.definitions();
+        const definitions = forceFinalAnswer ? [] : this.tools.definitions();
         const context = buildContext(session.history, { maxEstimatedTokens: this.budget,
           maxToolOutputChars: this.maxToolOutputChars }, definitions);
         const modelStartedAt = Date.now();
@@ -160,6 +163,12 @@ export class TurnRunner {
         });
 
         const text = assistantText.join("");
+        if (forceFinalAnswer && toolCalls.length > 0) {
+          throw new Error("Model requested a tool even though repeated calls forced final-answer mode");
+        }
+        if (forceFinalAnswer && !text.trim() && toolCalls.length === 0) {
+          throw new Error("Model produced no final answer after repeated read-only tool calls");
+        }
         if (text) {
           session.append({ role: "assistant", content: text });
         }
@@ -205,6 +214,9 @@ export class TurnRunner {
           return await this.abort(session, turnId, step, signal);
         }
 
+        const loopDetected = loopGuard.observe(toolCalls, results);
+        if (loopDetected) forceFinalAnswer = true;
+
         for (const result of results) {
           const content = boundToolOutput(result.content, this.maxToolOutputChars);
           if (content.length < result.content.length) {
@@ -226,6 +238,14 @@ export class TurnRunner {
           });
         }
       }
+
+      await this.events.emit({
+        type: "turn.max_steps",
+        sessionId: session.id,
+        turnId,
+        steps: this.maxSteps,
+        at: Date.now(),
+      });
 
       return {
         type: "max_steps",

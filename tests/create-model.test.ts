@@ -30,3 +30,13 @@ test("model factory rejects unsupported providers", () => {
     /Unsupported MODEL_PROVIDER: unknown/,
   );
 });
+
+
+test("Groq model factory forwards opt-in HTTP trace to the provider", () => {
+  const trace = { record(_type: string, _data: unknown) {} };
+  const model = createModelFromEnv({
+    MODEL_PROVIDER: "groq",
+    GROQ_API_KEY: "test-groq-key",
+  }, trace);
+  assert.equal((model as unknown as { options: { trace?: unknown } }).options.trace, trace);
+});

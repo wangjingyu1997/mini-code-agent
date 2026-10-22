@@ -52,3 +52,40 @@ test("token estimate includes the advertised tool schemas", () => {
   assert.ok(b.estimatedTokens > a.estimatedTokens);
   assert.ok(estimateTokens("abc") > 0);
 });
+
+
+test("latest large read_file output is kept with its call even under tight budget", () => {
+  const messages: AgentMessage[] = [
+    { role: "user", content: "List all Node.js modules used in src" },
+    { role: "assistant_tool_call", callId: "search-1", toolName: "search_code",
+      input: { path: "src", query: "node:" } },
+    { role: "tool", callId: "search-1", toolName: "search_code",
+      content: "src/a.ts: import { stat } from 'node:fs/promises';", isError: false },
+    { role: "assistant_tool_call", callId: "read-1", toolName: "read_file",
+      input: { path: "src/a.ts" } },
+    { role: "tool", callId: "read-1", toolName: "read_file",
+      content: "src/a.ts\n---\n" + "A".repeat(8500), isError: false },
+  ];
+  const result = buildContext(messages,
+    { maxEstimatedTokens: 1100, maxToolOutputChars: 5000 },
+    [{ name: "read_file", description: "Read file" }]);
+  const reads = result.messages.filter(m => m.role === "tool");
+  assert.ok(reads.length > 0, "must not drop all recent tool evidence");
+  assert.equal(reads[reads.length - 1]?.role, "tool");
+  const read = reads[reads.length - 1];
+  assert.ok(read?.role === "tool" && read.callId === "read-1",
+    "latest tool result must survive with matching function_call");
+  assert.ok(result.messages.some(m => m.role === "assistant_tool_call" && m.callId === "read-1"));
+  assert.ok(result.compacted);
+});
+
+test("retained oversized evidence still stays within approximate request budget", () => {
+  const messages: AgentMessage[] = [
+    { role: "user", content: "Explain the source file" },
+    { role: "assistant_tool_call", callId: "a", toolName: "read_file", input: { path: "a.ts" } },
+    { role: "tool", callId: "a", toolName: "read_file", content: "a.ts\n" + "x".repeat(10000), isError: false },
+  ];
+  const context = buildContext(messages, { maxEstimatedTokens: 1200 });
+  assert.ok(context.estimatedTokens <= 1200,
+    "approximate budget should include truncation notice and retained evidence");
+});

@@ -139,10 +139,12 @@ export class OpenAIResponsesModel implements Model {
       },
       body: JSON.stringify({
         model: this.options.model,
-        instructions: this.instructions,
+        instructions: request.tools.length === 0
+          ? this.instructions + " Tool calling is disabled because the previous tool calls made no new progress. Give the best possible final answer now using the available evidence, and state any limits. Do not invent missing source evidence."
+          : this.instructions,
         input: toOpenAIInput(request.messages),
         tools: request.tools.map(toOpenAITool),
-        tool_choice: "auto",
+        tool_choice: request.tools.length === 0 ? "none" : "auto",
         stream: true,
       }),
       signal,

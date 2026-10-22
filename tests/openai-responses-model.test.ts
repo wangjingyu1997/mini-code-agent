@@ -412,3 +412,23 @@ test("raw trace captures outgoing JSON and incoming SSE without storing Authoriz
   assert.doesNotMatch(JSON.stringify(trace), /do-not-log-this-secret/);
   assert.match(JSON.stringify(trace[0]), /read_file/);
 });
+
+
+test("final answer mode disables provider tool selection", async () => {
+  let body: Record<string, unknown> = {};
+  const model = new OpenAIResponsesModel({
+    apiKey: "test-key", model: "test-model",
+    fetchImpl: async (_url, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return sseResponse([
+        { type: "response.output_text.delta", delta: "Final answer" },
+        { type: "response.completed" },
+      ]);
+    },
+  });
+  const events = await collect(model, { ...baseRequest, tools: [] });
+  assert.equal(body.tool_choice, "none");
+  assert.deepEqual(body.tools, []);
+  assert.match(String(body.instructions), /Give the best possible final answer/);
+  assert.ok(events.some(event => event.type === "text.delta"));
+});

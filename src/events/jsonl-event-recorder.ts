@@ -31,6 +31,9 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
     case "turn.started":
       record.inputChars = event.input.length;
       break;
+    case "turn.max_steps":
+      record.steps = event.steps;
+      break;
     case "turn.completed":
       record.answerChars = event.answer.length;
       break;

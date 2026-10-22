@@ -118,6 +118,48 @@ export function buildContext(
     offset = end;
   }
 
+  // Critical invariant: never discard the most recent completed tool result
+  // merely because one read_file response exceeds the remaining budget.
+  // Keep its function-call pair and shrink the output until that pair fits.
+  const newestIndex = units.length - 1;
+  let recentEvidenceTrimmed = false;
+  const newest = units[newestIndex];
+  if (newest && !selected.has(newestIndex) &&
+      newest.messages.some((message) => message.role === "tool")) {
+    const maxChars = Math.max(0, ...newest.messages
+      .filter((message) => message.role === "tool")
+      .map((message) => message.role === "tool" ? message.content.length : 0));
+
+    const resize = (limit: number): AgentMessage[] => newest.messages.map((message) => {
+      if (message.role !== "tool" || message.content.length <= limit) return message;
+      return { ...message, content: message.content.slice(0, limit) +
+        "\\n[tool evidence shortened to fit current model request]" };
+    });
+    const room = Math.max(0, budget - used - 60);
+    let low = 0;
+    let high = maxChars;
+    let fitting: AgentMessage[] | undefined;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const candidate = resize(mid);
+      if (estimateTokens(candidate) <= room) {
+        fitting = candidate;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    if (fitting) {
+      const trimmed = newest.messages.some((message, index) =>
+        message.role === "tool" && fitting![index]?.role === "tool" &&
+        (fitting![index] as { content: string }).content !== message.content);
+      recentEvidenceTrimmed = trimmed;
+      units[newestIndex] = { messages: fitting, size: estimateTokens(fitting) };
+      selected.add(newestIndex);
+      used += estimateTokens(fitting);
+    }
+  }
+
   // Only add a contiguous suffix of complete batches: older context isn't
   // more important than the latest tool evidence. Avoid dropping a new tool
   // output while keeping its preceding function_call, or vice versa.
@@ -138,7 +180,7 @@ export function buildContext(
   });
   const shortened = history.some((m, i) => m.role === "tool" &&
     capped[i]?.role === "tool" && (capped[i] as { content: string }).content.length < m.content.length);
-  const compacted = dropped > 0 || shortened;
+  const compacted = dropped > 0 || shortened || recentEvidenceTrimmed;
 
   if (dropped > 0) {
     picked.unshift({

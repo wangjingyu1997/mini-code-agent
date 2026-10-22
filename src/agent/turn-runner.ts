@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { buildContext, boundToolOutput } from "./context-budget";
 import { ToolLoopGuard } from "./tool-loop-guard";
+import { buildFinalAnswerContext } from "./final-answer-context";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
@@ -64,8 +65,10 @@ export class TurnRunner {
         let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
         const definitions = forceFinalAnswer ? [] : this.tools.definitions();
-        const context = buildContext(session.history, { maxEstimatedTokens: this.budget,
-          maxToolOutputChars: this.maxToolOutputChars }, definitions);
+        const context = forceFinalAnswer
+          ? buildFinalAnswerContext(session.history, this.budget)
+          : buildContext(session.history, { maxEstimatedTokens: this.budget,
+            maxToolOutputChars: this.maxToolOutputChars }, definitions);
         const modelStartedAt = Date.now();
         await this.events.emit({
           type: "model.request.prepared",

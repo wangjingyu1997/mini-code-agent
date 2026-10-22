@@ -3,6 +3,7 @@ import type { Model } from "../model";
 import type { AgentMessage, ModelEvent, ModelRequest } from "../types";
 import { parseSseJson } from "../sse";
 import { rateLimitWaitMs, waitForRateLimit } from "../rate-limit";
+import type { HttpTrace } from "../../observability/raw-trace-recorder";
 
 export type OpenAIResponsesModelOptions = Readonly<{
   apiKey: string;
@@ -12,6 +13,7 @@ export type OpenAIResponsesModelOptions = Readonly<{
   fetchImpl?: typeof fetch;
   /** Additional HTTP attempts on rate limits, after the initial request. */
   maxRateLimitRetries?: number;
+  trace?: HttpTrace;
 }>;
 
 type FunctionCallMetadata = {
@@ -145,10 +147,34 @@ export class OpenAIResponsesModel implements Model {
       signal,
     };
 
+    // Trace only the HTTP JSON payload, never the Authorization header.
+    this.options.trace?.record("http.request", {
+      url: this.baseUrl + "/responses",
+      body: JSON.parse(String(requestOptions.body)) as unknown,
+    });
+
     let response: Response;
     for (let retries = 0; ; retries += 1) {
       if (signal.aborted) throw signal.reason ?? new Error("Model invocation aborted");
-      response = await this.fetchImpl(`${this.baseUrl}/responses`, requestOptions);
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/responses`, requestOptions);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
+        const networkDetail = cause instanceof Error
+          ? cause.message
+          : cause && typeof cause === "object" && "code" in cause
+            ? String((cause as { code: unknown }).code)
+            : undefined;
+        this.options.trace?.record("http.network_error", {
+          name: error instanceof Error ? error.name : "UnknownError",
+          cause: networkDetail ?? "unknown",
+        });
+        throw new Error("Model network request failed: " +
+          (error instanceof Error ? error.message : String(error)) +
+          (networkDetail ? " (" + networkDetail + ")" : ""), { cause: error });
+      }
+      this.options.trace?.record("http.status", { status: response.status, attempt: retries + 1 });
       if (response.ok) break;
 
       const body = await response.text();
@@ -185,6 +211,7 @@ export class OpenAIResponsesModel implements Model {
     let completed = false;
 
     for await (const rawEvent of parseSseJson(response.body, signal)) {
+      this.options.trace?.record("http.sse", rawEvent);
       if (!isRecord(rawEvent) || typeof rawEvent.type !== "string") {
         continue;
       }

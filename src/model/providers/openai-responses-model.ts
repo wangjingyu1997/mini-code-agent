@@ -310,10 +310,22 @@ export class OpenAIResponsesModel implements Model {
           throw new Error(`Responses API response.incomplete: ${reason}`);
         }
 
-        case "response.completed":
+        case "response.completed": {
           completed = true;
-          yield { type: "response.completed" };
+          const responseRecord = isRecord(rawEvent.response) ? rawEvent.response : {};
+          const usage = isRecord(responseRecord.usage) ? responseRecord.usage : {};
+          const valid = [usage.input_tokens, usage.output_tokens, usage.total_tokens]
+            .every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0);
+          yield {
+            type: "response.completed",
+            ...(valid ? { usage: {
+              inputTokens: usage.input_tokens as number,
+              outputTokens: usage.output_tokens as number,
+              totalTokens: usage.total_tokens as number,
+            } } : {}),
+          };
           break;
+        }
 
         case "error": {
           const message = typeof rawEvent.message === "string"

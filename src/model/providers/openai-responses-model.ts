@@ -114,6 +114,7 @@ export class OpenAIResponsesModel implements Model {
       "Keep tool arguments minimal and valid according to their JSON schema.",
       "Use only the exact tool names provided in the tools array; do not invent names or namespace prefixes.",
       "For broad repository searches, prefer a single targeted search using bash (with user approval) over repeatedly listing directories.",
+      "For a repository-wide import scan, use search_code with {query, path} before reading files.",
       "Read only relevant files; avoid repeating the same tool call without new evidence.",
       "Use bash only when needed; every shell command requires user approval.",
       "If a command is denied, do not retry it without a new user request.",

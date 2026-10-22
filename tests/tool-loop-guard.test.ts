@@ -46,6 +46,9 @@ test("repeating read-only tools transitions to one final no-tools model call", a
     async *stream(request) {
       requestedTools.push(request.tools.length);
       if (request.tools.length === 0) {
+        assert.equal(request.messages.length, 1, "tool history must be flattened for final answer");
+        assert.equal(request.messages[0]?.role, "user");
+        assert.match((request.messages[0] as { content: string }).content, /file.txt/);
         yield { type: "text.delta", text: "Directory contains file.txt; no more tools needed." };
       } else {
         yield { type: "tool.call", call: {
@@ -68,7 +71,7 @@ test("repeating read-only tools transitions to one final no-tools model call", a
     assert.match(result.answer, /file.txt/);
     assert.ok(result.steps < 12);
   }
-  assert.deepEqual(requestedTools, [1, 1, 1, 1, 0]);
+  assert.deepEqual(requestedTools, [1, 1, 1, 0]);
 });
 
 test("max_steps returns a terminal event visible to observers and trace", async () => {

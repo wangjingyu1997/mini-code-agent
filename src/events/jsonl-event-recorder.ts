@@ -62,6 +62,11 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
       record.durationMs = event.durationMs;
       record.textChars = event.textChars;
       record.toolCallCount = event.toolCallCount;
+      if (event.usage) {
+        record.inputTokens = event.usage.inputTokens;
+        record.outputTokens = event.usage.outputTokens;
+        record.totalTokens = event.usage.totalTokens;
+      }
       break;
     case "tool.started":
       record.queueWaitMs = event.queueWaitMs;

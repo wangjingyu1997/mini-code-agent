@@ -58,6 +58,7 @@ export class TurnRunner {
         const stepId = `${turnId}:${step}`;
         const assistantText: string[] = [];
         const toolCalls: ToolCall[] = [];
+        let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
         const definitions = this.tools.definitions();
         const context = buildContext(session.history, { maxEstimatedTokens: this.budget,
@@ -94,6 +95,7 @@ export class TurnRunner {
             signal,
           )) {
             this.consumeModelEvent(event, assistantText, toolCalls);
+            if (event.type === "response.completed") usage = event.usage;
   
             if (event.type === "rate_limit.retry") {
               await this.events.emit({
@@ -153,6 +155,7 @@ export class TurnRunner {
           durationMs: Date.now() - modelStartedAt,
           toolCallCount: toolCalls.length,
           textChars: assistantText.reduce((sum, chunk) => sum + chunk.length, 0),
+          ...(usage ? { usage } : {}),
           at: Date.now(),
         });
 

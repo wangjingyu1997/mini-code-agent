@@ -239,6 +239,14 @@ export class TurnRunner {
         }
       }
 
+      await this.events.emit({
+        type: "turn.max_steps",
+        sessionId: session.id,
+        turnId,
+        steps: this.maxSteps,
+        at: Date.now(),
+      });
+
       return {
         type: "max_steps",
         turnId,

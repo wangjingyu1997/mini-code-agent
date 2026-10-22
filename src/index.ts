@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       try {
         const result = await runtime.runTurn(session, prompt, controller.signal);
         // turn.completed / turn.failed / turn.aborted are rendered by TerminalUI.
-        if (result.type === "max_steps") ui.maxSteps(result.steps);
+        // All terminal states, including max_steps, arrive via EventBus.
       } finally {
         rl.removeListener("SIGINT", onSigint);
         process.removeListener("SIGINT", onSigint);

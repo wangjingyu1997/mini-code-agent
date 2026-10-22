@@ -237,6 +237,9 @@ export class TerminalUI {
           this.style("· " + event.durationMs + "ms", "dim"));
         this.line("  " + safeTerminalText(formatDiagnostic(event.error.message)));
         break;
+      case "turn.max_steps":
+        this.maxSteps(event.steps);
+        break;
       case "turn.completed":
         this.closeStreamingText();
         this.line();

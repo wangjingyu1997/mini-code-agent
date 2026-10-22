@@ -36,6 +36,7 @@ async function main(): Promise<void> {
   const registry = new ToolRegistry();
   registry.register(readFileTool);
   registry.register(listFilesTool);
+  registry.register(searchCodeTool);
   registry.register(applyPatchTool);
   registry.register(applyPatchSetTool);
   registry.register(createBashTool({

@@ -944,3 +944,56 @@ Used 5850、Requested 2354、`Please try again in 1.53s`。
 - Transport errors such as `TypeError: fetch failed` now report the underlying cause when available. This is distinct from HTTP 429, 400 context errors and SSE errors. No automatic retry of uncertain transport failures is claimed.
 
 These are pragmatic initial limits, **not** exact tokenizer-driven budgeting, semantic LLM compaction, OS sandboxing or guaranteed resolution of network faults. Long-lived multi-turn memory and provider-wide rate-limit scheduling need dedicated follow-up work.
+
+
+---
+
+### 2026-10-22 — Incident review: repeated search/read loop caused by context compaction
+
+**Observed user-provided raw trace**
+
+For a request to find all `node:` imports under `src`, the initial
+`search_code({path:"src",query:"node:"})` successfully scanned 38 files and
+returned 27 matches. The next 19 steps never produced assistant answer text.
+Across 20 model requests, 16 of 20 tool calls were duplicates of only four
+unique read-only requests. Provider usage totalled 33,476 input + 3,235
+output = 36,711 tokens, with 16 rate-limit waits totalling 211.6s.
+
+At step 7 the compactor emitted a request containing just two messages:
+the original user question and a notice about omitted history. It had
+dropped the most recent `read_file` call/output pair in response to a
+large 5,000-character Tool output; the model then restarted its search.
+This demonstrates that keeping `function_call` and `function_call_output`
+together is necessary but **not sufficient**: the newest usable evidence
+must survive a budget reduction.
+
+**Changes**
+
+1. `buildContext` now keeps the most recent complete Tool-call/result
+   batch, shortening its Tool output to fit the available approximate
+   budget rather than discarding the whole batch.
+2. Add `ToolLoopGuard`: hash exact read-only Tool outputs keyed by stable
+   arguments. After three consecutive repeated reads with no new evidence
+   (and no intervening mutating tool), request a final model response
+   with `tools=[]` and `tool_choice="none"`. Mutations invalidate the
+   read ledger. This bounds repeated lookups, not reasoning quality.
+3. Add a typed `turn.max_steps` event so the CLI, event store and raw
+   trace all show the terminal state rather than silently ending after a
+   final `tool.completed`.
+4. Fix `createModelFromEnv` not forwarding optional raw trace to
+   **Groq** (it had been forwarded only to OpenAI). This explained why the
+   uploaded raw log contained `agent.*` events but no `http.*` events.
+5. Add tests for evidence retention, finite repeat detection, final
+   no-tools request, Groq trace wiring, and max-steps observability.
+
+**Remaining caveats**
+
+- This does not provide full semantic working memory, progress-aware
+  planning, grounded final-answer synthesis, exact provider tokenization or
+  safe continuation after transport uncertainty.
+- `search_code` is a literal substring matcher. A query for `node:`
+  also matches the string in its own Tool schema/implementation, not
+  just import statements; more structured AST-based repository analysis
+  is a separate future enhancement.
+- No live end-to-end Groq request is performed by the unit tests; protocol
+  compatibility and overall final-answer quality must be verified locally.

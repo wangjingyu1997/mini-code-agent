@@ -16,12 +16,18 @@ import { applyPatchSetTool } from "./tools/tools/apply-patch-set";
 import { createBashTool } from "./tools/tools/bash";
 import { listFilesTool } from "./tools/tools/list-files";
 import { TerminalUI } from "./cli/terminal-ui";
+import { RawTraceRecorder } from "./observability/raw-trace-recorder";
 import { readFileTool } from "./tools/tools/read-file";
+import { searchCodeTool } from "./tools/tools/search-code";
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input, output });
   const ui = new TerminalUI(output);
   const events = new EventBus();
+  const trace = process.env.AGENT_TRACE === "1"
+    ? new RawTraceRecorder(path.join(process.cwd(), ".mini-code-agent", "logs", "raw-trace.jsonl"))
+    : undefined;
+  if (trace) events.subscribe((event) => trace.recordEvent(event));
   const store = new InMemoryEventStore();
   const recorder = new JsonlEventRecorder(
     path.join(process.cwd(), ".mini-code-agent", "logs", "events.jsonl"),
@@ -30,6 +36,7 @@ async function main(): Promise<void> {
   const registry = new ToolRegistry();
   registry.register(readFileTool);
   registry.register(listFilesTool);
+  registry.register(searchCodeTool);
   registry.register(applyPatchTool);
   registry.register(applyPatchSetTool);
   registry.register(createBashTool({
@@ -49,8 +56,11 @@ async function main(): Promise<void> {
 
   const orchestrator = new ToolOrchestrator(registry, events);
   const scheduler = new ToolScheduler(orchestrator, { maxConcurrency: 4 });
-  const model = createModelFromEnv();
-  const runner = new TurnRunner(model, orchestrator, scheduler, events);
+  const model = createModelFromEnv(process.env, trace);
+  const runner = new TurnRunner(model, orchestrator, scheduler, events, {
+    contextBudget: Number(process.env.AGENT_INPUT_TOKEN_BUDGET ?? 3000),
+    maxToolOutputChars: Number(process.env.AGENT_TOOL_OUTPUT_CHARS ?? 5000),
+  });
   const runtime = new AgentRuntime(runner, events, store);
   const session = runtime.createSession(process.cwd());
 
@@ -58,6 +68,7 @@ async function main(): Promise<void> {
 
   const provider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
   ui.banner(provider, process.cwd());
+  if (trace) output.write("  ⚠ RAW TRACE ENABLED: prompts, source and tool results saved to .mini-code-agent/logs/raw-trace.jsonl\n\n");
 
   try {
     while (true) {
@@ -93,6 +104,7 @@ async function main(): Promise<void> {
   } finally {
     rl.close();
     await recorder.flush();
+    await trace?.flush();
   }
 }
 

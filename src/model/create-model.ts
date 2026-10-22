@@ -1,10 +1,11 @@
 import type { Model } from "./model";
 import { MockModel } from "./mock-model";
 import { OpenAIResponsesModel } from "./providers/openai-responses-model";
+import type { HttpTrace } from "../observability/raw-trace-recorder";
 
 export type ModelEnvironment = Readonly<Record<string, string | undefined>>;
 
-export function createModelFromEnv(env: ModelEnvironment = process.env): Model {
+export function createModelFromEnv(env: ModelEnvironment = process.env, trace?: HttpTrace): Model {
   const provider = env.MODEL_PROVIDER?.trim().toLowerCase() || "mock";
 
   if (provider === "mock") {
@@ -25,6 +26,7 @@ export function createModelFromEnv(env: ModelEnvironment = process.env): Model {
     return new OpenAIResponsesModel({
       apiKey,
       model,
+      ...(trace ? { trace } : {}),
     });
   }
 

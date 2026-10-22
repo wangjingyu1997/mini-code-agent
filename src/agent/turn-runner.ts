@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildContext, boundToolOutput } from "./context-budget";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
@@ -11,10 +12,14 @@ import type { TurnTerminalState } from "./state";
 
 export type TurnRunnerOptions = Readonly<{
   maxSteps?: number;
+  contextBudget?: number;
+  maxToolOutputChars?: number;
 }>;
 
 export class TurnRunner {
   private readonly maxSteps: number;
+  private readonly budget: number;
+  private readonly maxToolOutputChars: number;
 
   constructor(
     private readonly model: Model,
@@ -24,6 +29,8 @@ export class TurnRunner {
     options: TurnRunnerOptions = {},
   ) {
     this.maxSteps = options.maxSteps ?? 20;
+    this.budget = options.contextBudget ?? 3000;
+    this.maxToolOutputChars = options.maxToolOutputChars ?? 5000;
   }
 
   async run(
@@ -51,8 +58,23 @@ export class TurnRunner {
         const stepId = `${turnId}:${step}`;
         const assistantText: string[] = [];
         const toolCalls: ToolCall[] = [];
+        let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
+        const definitions = this.tools.definitions();
+        const context = buildContext(session.history, { maxEstimatedTokens: this.budget,
+          maxToolOutputChars: this.maxToolOutputChars }, definitions);
         const modelStartedAt = Date.now();
+        await this.events.emit({
+          type: "model.request.prepared",
+          sessionId: session.id, turnId, stepId,
+          messageCount: context.messages.length,
+          toolCount: definitions.length,
+          estimatedTokens: context.estimatedTokens,
+          originalEstimatedTokens: context.originalEstimatedTokens,
+          droppedMessages: context.droppedMessages,
+          compacted: context.compacted,
+          at: Date.now(),
+        });
         await this.events.emit({
           type: "model.started",
           sessionId: session.id,
@@ -67,12 +89,13 @@ export class TurnRunner {
               sessionId: session.id,
               turnId,
               stepId,
-              messages: [...session.history],
-              tools: this.tools.definitions(),
+              messages: context.messages,
+              tools: definitions,
             },
             signal,
           )) {
             this.consumeModelEvent(event, assistantText, toolCalls);
+            if (event.type === "response.completed") usage = event.usage;
   
             if (event.type === "rate_limit.retry") {
               await this.events.emit({
@@ -132,6 +155,7 @@ export class TurnRunner {
           durationMs: Date.now() - modelStartedAt,
           toolCallCount: toolCalls.length,
           textChars: assistantText.reduce((sum, chunk) => sum + chunk.length, 0),
+          ...(usage ? { usage } : {}),
           at: Date.now(),
         });
 
@@ -182,11 +206,22 @@ export class TurnRunner {
         }
 
         for (const result of results) {
+          const content = boundToolOutput(result.content, this.maxToolOutputChars);
+          if (content.length < result.content.length) {
+            await this.events.emit({
+              type: "tool.output.budgeted",
+              sessionId: session.id, turnId, stepId,
+              callId: result.callId, toolName: result.toolName,
+              originalChars: result.content.length,
+              forwardedChars: content.length,
+              at: Date.now(),
+            });
+          }
           session.append({
             role: "tool",
             callId: result.callId,
             toolName: result.toolName,
-            content: result.content,
+            content,
             isError: result.isError,
           });
         }

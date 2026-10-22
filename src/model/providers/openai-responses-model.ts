@@ -3,6 +3,7 @@ import type { Model } from "../model";
 import type { AgentMessage, ModelEvent, ModelRequest } from "../types";
 import { parseSseJson } from "../sse";
 import { rateLimitWaitMs, waitForRateLimit } from "../rate-limit";
+import type { HttpTrace } from "../../observability/raw-trace-recorder";
 
 export type OpenAIResponsesModelOptions = Readonly<{
   apiKey: string;
@@ -12,6 +13,7 @@ export type OpenAIResponsesModelOptions = Readonly<{
   fetchImpl?: typeof fetch;
   /** Additional HTTP attempts on rate limits, after the initial request. */
   maxRateLimitRetries?: number;
+  trace?: HttpTrace;
 }>;
 
 type FunctionCallMetadata = {
@@ -112,6 +114,7 @@ export class OpenAIResponsesModel implements Model {
       "Keep tool arguments minimal and valid according to their JSON schema.",
       "Use only the exact tool names provided in the tools array; do not invent names or namespace prefixes.",
       "For broad repository searches, prefer a single targeted search using bash (with user approval) over repeatedly listing directories.",
+      "For a repository-wide import scan, use search_code with {query, path} before reading files.",
       "Read only relevant files; avoid repeating the same tool call without new evidence.",
       "Use bash only when needed; every shell command requires user approval.",
       "If a command is denied, do not retry it without a new user request.",
@@ -145,10 +148,34 @@ export class OpenAIResponsesModel implements Model {
       signal,
     };
 
+    // Trace only the HTTP JSON payload, never the Authorization header.
+    this.options.trace?.record("http.request", {
+      url: this.baseUrl + "/responses",
+      body: JSON.parse(String(requestOptions.body)) as unknown,
+    });
+
     let response: Response;
     for (let retries = 0; ; retries += 1) {
       if (signal.aborted) throw signal.reason ?? new Error("Model invocation aborted");
-      response = await this.fetchImpl(`${this.baseUrl}/responses`, requestOptions);
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/responses`, requestOptions);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
+        const networkDetail = cause instanceof Error
+          ? cause.message
+          : cause && typeof cause === "object" && "code" in cause
+            ? String((cause as { code: unknown }).code)
+            : undefined;
+        this.options.trace?.record("http.network_error", {
+          name: error instanceof Error ? error.name : "UnknownError",
+          cause: networkDetail ?? "unknown",
+        });
+        throw new Error("Model network request failed: " +
+          (error instanceof Error ? error.message : String(error)) +
+          (networkDetail ? " (" + networkDetail + ")" : ""), { cause: error });
+      }
+      this.options.trace?.record("http.status", { status: response.status, attempt: retries + 1 });
       if (response.ok) break;
 
       const body = await response.text();
@@ -185,6 +212,7 @@ export class OpenAIResponsesModel implements Model {
     let completed = false;
 
     for await (const rawEvent of parseSseJson(response.body, signal)) {
+      this.options.trace?.record("http.sse", rawEvent);
       if (!isRecord(rawEvent) || typeof rawEvent.type !== "string") {
         continue;
       }
@@ -282,10 +310,22 @@ export class OpenAIResponsesModel implements Model {
           throw new Error(`Responses API response.incomplete: ${reason}`);
         }
 
-        case "response.completed":
+        case "response.completed": {
           completed = true;
-          yield { type: "response.completed" };
+          const responseRecord = isRecord(rawEvent.response) ? rawEvent.response : {};
+          const usage = isRecord(responseRecord.usage) ? responseRecord.usage : {};
+          const valid = [usage.input_tokens, usage.output_tokens, usage.total_tokens]
+            .every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0);
+          yield {
+            type: "response.completed",
+            ...(valid ? { usage: {
+              inputTokens: usage.input_tokens as number,
+              outputTokens: usage.output_tokens as number,
+              totalTokens: usage.total_tokens as number,
+            } } : {}),
+          };
           break;
+        }
 
         case "error": {
           const message = typeof rawEvent.message === "string"

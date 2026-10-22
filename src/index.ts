@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const orchestrator = new ToolOrchestrator(registry, events);
   const scheduler = new ToolScheduler(orchestrator, { maxConcurrency: 4 });
   const model = createModelFromEnv(process.env, trace);
-  const runner = new TurnRunner(model, orchestrator, scheduler, events);
+  const runner = new TurnRunner(model, orchestrator, scheduler, events, { contextBudget: 3000 });
   const runtime = new AgentRuntime(runner, events, store);
   const session = runtime.createSession(process.cwd());
 

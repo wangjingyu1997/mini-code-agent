@@ -42,6 +42,7 @@ export function createModelFromEnv(env: ModelEnvironment = process.env, trace?: 
       apiKey,
       model,
       baseUrl: "https://api.groq.com/openai/v1",
+      ...(trace ? { trace } : {}),
     });
   }
 

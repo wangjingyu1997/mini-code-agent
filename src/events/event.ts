@@ -26,6 +26,17 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "task.progress.updated";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      distinctEvidence: number;
+      repeatedReads: number;
+      changedReads: number;
+      invalidations: number;
+      at: number;
+    }>
+  | Readonly<{
       type: "tool.output.budgeted";
       sessionId: string;
       turnId: string;

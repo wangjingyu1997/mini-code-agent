@@ -85,10 +85,29 @@ export function buildContext(
   history: readonly AgentMessage[],
   options: ContextBudgetOptions = {},
   toolDefinitions: readonly unknown[] = [],
+  workingMemory = "",
 ): ContextBuild {
   const maxTokens = positive(options.maxEstimatedTokens ?? DEFAULT_TOKENS, "maxEstimatedTokens");
   const originalEstimatedTokens = estimateTokens({ history, toolDefinitions });
-  const overhead = estimateTokens(toolDefinitions) + 120; // instructions/protocol reserve (approx.)
+  // Bound optional per-turn working memory independently of the history.
+  // It is a regular user-role data message, never promoted to system instructions.
+  const noteBudget = Math.min(450, Math.floor(maxTokens * 0.20));
+  let note: AgentMessage | undefined;
+  if (workingMemory && noteBudget > 30) {
+    let lo = 0;
+    let hi = workingMemory.length;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const candidate: AgentMessage = { role: "user", content: workingMemory.slice(0, mid) };
+      if (estimateTokens([candidate]) <= noteBudget) {
+        note = candidate;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+  }
+  const noteTokens = note ? estimateTokens([note]) : 0;
+  const overhead = estimateTokens(toolDefinitions) + noteTokens + 120;
+
   const budget = Math.max(100, maxTokens - overhead);
 
   const capped = history.map((m): AgentMessage =>
@@ -189,6 +208,8 @@ export function buildContext(
         dropped + " messages omitted.]",
     });
   }
+
+  if (note) picked.unshift(note);
 
   return {
     messages: picked,

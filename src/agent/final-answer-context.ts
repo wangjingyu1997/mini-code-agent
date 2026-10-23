@@ -1,5 +1,7 @@
 import type { AgentMessage } from "../model/types";
 import { estimateTokens, type ContextBuild } from "./context-budget";
+import type { EvidenceRecord } from "./evidence-store";
+import { toolRequestKey } from "./tool-key";
 
 const READ_TOOLS = new Set(["search_code", "read_file", "list_files"]);
 
@@ -29,6 +31,7 @@ function latestUserText(history: readonly AgentMessage[]): { index: number; text
 export function buildFinalAnswerContext(
   history: readonly AgentMessage[],
   maxEstimatedTokens = 3_000,
+  observedEvidence?: readonly EvidenceRecord[],
 ): ContextBuild {
   if (!Number.isSafeInteger(maxEstimatedTokens) || maxEstimatedTokens < 300) {
     throw new RangeError("maxEstimatedTokens must be >= 300");
@@ -45,7 +48,7 @@ export function buildFinalAnswerContext(
                READ_TOOLS.has(message.toolName)) {
       const call = calls.get(message.callId);
       if (!call || call.toolName !== message.toolName) continue;
-      const key = call.toolName + ":" + JSON.stringify(call.input);
+      const key = toolRequestKey(call.toolName, call.input);
       distinct.set(key, {
         toolName: call.toolName,
         input: call.input,
@@ -54,7 +57,9 @@ export function buildFinalAnswerContext(
     }
   }
 
-  const evidence = [...distinct.values()].sort((a, b) =>
+  // When a turn-scoped EvidenceStore is supplied, prefer its observed snapshots
+  // over replaying possibly truncated or stale Session.history.
+  const evidence = [...(observedEvidence === undefined ? distinct.values() : observedEvidence)].sort((a, b) =>
     Number(b.toolName === "search_code") - Number(a.toolName === "search_code"),
   );
 

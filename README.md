@@ -1051,3 +1051,46 @@ does not guarantee a Groq model will return a complete, correct answer.
 Context compaction remains lossy, finalization is a safety fallback rather
 than a real task-progress memory, and HTTP requests still consume Groq TPM.
 Review any opt-in raw trace locally because it may contain source and secrets.
+
+---
+
+### 2026-10-23 — Task Progress + Evidence Store (deterministic working-memory foundation)
+
+**Why:** Repeated search_code / read_file cycles revealed a limitation of Context Units:
+they preserve function-call causality, but when global search results are pushed
+out of a model request, the model can lose useful evidence and repeat work.
+
+**What changed:**
+
+- Added src/agent/tool-key.ts: one canonical tool identity helper is shared by
+  ToolLoopGuard, EvidenceStore, and final-answer recovery.
+- Added src/agent/evidence-store.ts: one in-memory store per Turn, accepting only
+  successful read-only tool outputs. Stable argument keys deduplicate observations,
+  SHA-256 detects changed output, at most 24 records and 10,000 chars per snapshot.
+  Mutating/unknown tools invalidate the ledger conservatively.
+- Added src/agent/task-progress.ts: machine-observed progress (unique lookups,
+  duplicate reads, changed results and invalidations), not invented semantic facts.
+  It prioritizes the search_code inventory and keeps short read_file excerpts.
+- buildContext reserves a bounded slice of its estimated input budget for the
+  working-memory note. The note is treated as untrusted user-role data and is
+  not written back to Session.history. Function-call/output pairs remain intact.
+- TurnRunner captures successful full tool results BEFORE its 5,000-character
+  model-facing output truncation, then forwards the next step's compact factual
+  note. On loop recovery buildFinalAnswerContext prefers the current Turn's
+  EvidenceStore over possibly truncated historical tool responses.
+- Added task.progress.updated, with safe numeric metadata in events.jsonl and
+  a short progress indicator in the CLI. No new raw file content goes into
+  the default safe JSONL log.
+
+**Tests:** Run the real source search and large-file read through TurnRunner,
+then assert the next model call still has the initial node:crypto import inventory,
+despite historical compaction. Other tests cover stable key ordering, dedup,
+changed results, invalidation, final recovery and estimated budget.
+
+**Important limits:** This is a deterministic per-Turn ledger, not full semantic
+LLM compaction, task planning, source-version tracking, or durable multi-Turn
+memory. Session.history can still contain messages from previous Turns.
+The new note is an additional bounded model input, not a guarantee of
+correctness or a replacement for source evidence. Groq TPM is unchanged.
+Next: evidence IDs with source versions, task-state transitions, then
+grounded semantic memory consolidation.

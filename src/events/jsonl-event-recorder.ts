@@ -52,6 +52,12 @@ export function toSafeEventLogRecord(event: AgentEvent): SafeEventLogRecord | nu
       record.retryAttempt = event.attempt;
       record.waitMs = event.waitMs;
       break;
+    case "task.progress.updated":
+      record.distinctEvidence = event.distinctEvidence;
+      record.repeatedReads = event.repeatedReads;
+      record.changedReads = event.changedReads;
+      record.invalidations = event.invalidations;
+      break;
     case "model.request.prepared":
       record.messageCount = event.messageCount;
       record.toolCount = event.toolCount;

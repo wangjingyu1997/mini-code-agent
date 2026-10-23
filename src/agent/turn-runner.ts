@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { buildContext, boundToolOutput } from "./context-budget";
 import { ToolLoopGuard } from "./tool-loop-guard";
 import { buildFinalAnswerContext } from "./final-answer-context";
+import { TaskProgress } from "./task-progress";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
 import { serializeError } from "../events/event";
@@ -42,6 +43,7 @@ export class TurnRunner {
   ): Promise<TurnTerminalState> {
     const turnId = randomUUID();
     const loopGuard = new ToolLoopGuard();
+    const progress = new TaskProgress(input);
     let forceFinalAnswer = false;
     session.append({ role: "user", content: input });
 
@@ -66,9 +68,9 @@ export class TurnRunner {
 
         const definitions = forceFinalAnswer ? [] : this.tools.definitions();
         const context = forceFinalAnswer
-          ? buildFinalAnswerContext(session.history, this.budget)
+          ? buildFinalAnswerContext(session.history, this.budget, progress.orderedEvidence())
           : buildContext(session.history, { maxEstimatedTokens: this.budget,
-            maxToolOutputChars: this.maxToolOutputChars }, definitions);
+            maxToolOutputChars: this.maxToolOutputChars }, definitions, progress.contextNote());
         const modelStartedAt = Date.now();
         await this.events.emit({
           type: "model.request.prepared",
@@ -216,6 +218,17 @@ export class TurnRunner {
         if (signal.aborted) {
           return await this.abort(session, turnId, step, signal);
         }
+
+        const snapshot = progress.recordBatch(toolCalls, results);
+        await this.events.emit({
+          type: "task.progress.updated",
+          sessionId: session.id, turnId, stepId,
+          distinctEvidence: snapshot.distinctEvidence,
+          repeatedReads: snapshot.repeatedReads,
+          changedReads: snapshot.changedReads,
+          invalidations: snapshot.invalidations,
+          at: Date.now(),
+        });
 
         const loopDetected = loopGuard.observe(toolCalls, results);
         if (loopDetected) {

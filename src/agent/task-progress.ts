@@ -12,7 +12,8 @@ export type ProgressSnapshot = Readonly<{
 /**
  * A factual work ledger, not an LLM-created plan. "Observed" means the
  * runtime saw a successful Tool result, never that user intent is satisfied.
- * Lifetime: one Turn, so a failed prior Turn cannot contaminate a new goal.
+ * Lifetime: one Turn. Conversation history is managed separately and may
+ * still include earlier Turns; only this observed-evidence ledger resets.
  */
 export class TaskProgress {
   readonly evidence = new EvidenceStore();

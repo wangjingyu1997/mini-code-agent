@@ -59,7 +59,7 @@ export function buildFinalAnswerContext(
 
   // When a turn-scoped EvidenceStore is supplied, prefer its observed snapshots
   // over replaying possibly truncated or stale Session.history.
-  const evidence = (observedEvidence === undefined ? [...distinct.values()] : observedEvidence).sort((a, b) =>
+  const evidence = [...(observedEvidence === undefined ? distinct.values() : observedEvidence)].sort((a, b) =>
     Number(b.toolName === "search_code") - Number(a.toolName === "search_code"),
   );
 

@@ -132,6 +132,12 @@ export class TerminalUI {
       case "turn.started":
         this.reportedModelFailureTurnId = undefined;
         break;
+      case "task.progress.updated":
+        this.closeStreamingText();
+        this.line(this.style("  ↳ EVIDENCE", "cyan") + " " +
+          this.style(event.distinctEvidence + " unique lookups · " +
+            event.repeatedReads + " repeated · " + event.invalidations + " invalidations", "dim"));
+        break;
       case "model.request.prepared":
         this.closeStreamingText();
         this.line(this.style("↗ MODEL", "cyan") + " " +

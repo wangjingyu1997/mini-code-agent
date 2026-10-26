@@ -13,6 +13,7 @@ import { ToolOrchestrator } from "../src/tools/orchestrator";
 import { ToolRegistry } from "../src/tools/registry";
 import { ToolScheduler } from "../src/tools/scheduler";
 import { listFilesTool } from "../src/tools/tools/list-files";
+import { readFileTool } from "../src/tools/tools/read-file";
 
 test("loop guard detects identical read-only evidence and tolerates new facts", () => {
   const guard = new ToolLoopGuard(2);
@@ -71,7 +72,58 @@ test("repeating read-only tools transitions to one final no-tools model call", a
     assert.match(result.answer, /file.txt/);
     assert.ok(result.steps < 12);
   }
-  assert.deepEqual(requestedTools, [1, 1, 1, 0]);
+  assert.deepEqual(requestedTools, [1, 1, 1, 1, 0],
+    "first detected loop gets one corrective tool step, next repeated read forces fallback");
+  assert.equal(store.all().filter(e => e.type === "turn.recovery_requested").length, 1);
+  assert.equal(store.all().filter(e => e.type === "turn.loop_detected").length, 1);
+});
+
+
+test("corrective recovery can gather NEW file evidence and finish without forced fallback", async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "agent-replan-"));
+  t.after(() => rm(cwd, { force: true, recursive: true }));
+  await writeFile(path.join(cwd, "file.txt"), "the verified answer is 42", "utf8");
+
+  const events = new EventBus();
+  const store = new InMemoryEventStore();
+  const registry = new ToolRegistry();
+  registry.register(listFilesTool);
+  registry.register(readFileTool);
+  const orchestrator = new ToolOrchestrator(registry, events);
+  const scheduler = new ToolScheduler(orchestrator);
+  let step = 0;
+  const model: Model = {
+    async *stream(request) {
+      step++;
+      if (step <= 3) {
+        yield { type: "tool.call", call: {
+          id: "list-" + step, name: "list_files", input: { path: "." },
+        } };
+      } else if (step === 4) {
+        assert.equal(request.tools.length, 2, "correction must retain tool access");
+        assert.equal(request.messages.length, 1, "recovery avoids old function-call clutter");
+        const prompt = request.messages[0];
+        assert.ok(prompt?.role === "user");
+        assert.match(prompt.content, /RECOVERY: Previous tool queries returned unchanged evidence/);
+        assert.match(prompt.content, /file.txt/);
+        yield { type: "tool.call", call: {
+          id: "read-new", name: "read_file", input: { path: "file.txt" },
+        } };
+      } else {
+        const all = request.messages.map(m => m.role === "tool" ? m.content : "").join("\n");
+        assert.match(all, /the verified answer is 42/);
+        yield { type: "text.delta", text: "Verified from file.txt: answer is 42." };
+      }
+      yield { type: "response.completed" };
+    },
+  };
+  const runtime = new AgentRuntime(new TurnRunner(model, orchestrator, scheduler, events,
+    { maxSteps: 9, contextBudget: 2600 }), events, store);
+  const result = await runtime.runTurn(runtime.createSession(cwd), "Inspect file.txt and answer");
+  assert.equal(result.type, "completed");
+  assert.equal(step, 5);
+  assert.equal(store.all().filter(e => e.type === "turn.recovery_requested").length, 1);
+  assert.equal(store.all().filter(e => e.type === "turn.loop_detected").length, 0);
 });
 
 test("max_steps returns a terminal event visible to observers and trace", async () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { buildContext, boundToolOutput } from "./context-budget";
 import { ToolLoopGuard } from "./tool-loop-guard";
-import { buildFinalAnswerContext } from "./final-answer-context";
+import { buildFinalAnswerContext, buildRecoveryContext } from "./final-answer-context";
 import { TaskProgress } from "./task-progress";
 import type { ToolCall } from "../contracts/tool";
 import type { EventBus } from "../events/event-bus";
@@ -45,6 +45,8 @@ export class TurnRunner {
     const loopGuard = new ToolLoopGuard();
     const progress = new TaskProgress(input);
     let forceFinalAnswer = false;
+    let recoveryPending = false;
+    let recoveryAttempts = 0;
     session.append({ role: "user", content: input });
 
     await this.events.emit({
@@ -67,10 +69,14 @@ export class TurnRunner {
         let usage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
 
         const definitions = forceFinalAnswer ? [] : this.tools.definitions();
+        const recoverThisStep = recoveryPending;
+        recoveryPending = false;
         const context = forceFinalAnswer
           ? buildFinalAnswerContext(session.history, this.budget, progress.orderedEvidence())
-          : buildContext(session.history, { maxEstimatedTokens: this.budget,
-            maxToolOutputChars: this.maxToolOutputChars }, definitions, progress.contextNote());
+          : recoverThisStep
+            ? buildRecoveryContext(session.history, this.budget, progress.orderedEvidence(), definitions)
+            : buildContext(session.history, { maxEstimatedTokens: this.budget,
+              maxToolOutputChars: this.maxToolOutputChars }, definitions, progress.contextNote());
         const modelStartedAt = Date.now();
         await this.events.emit({
           type: "model.request.prepared",
@@ -232,11 +238,24 @@ export class TurnRunner {
 
         const loopDetected = loopGuard.observe(toolCalls, results);
         if (loopDetected) {
-          forceFinalAnswer = true;
-          await this.events.emit({
-            type: "turn.loop_detected", sessionId: session.id,
-            turnId, stepId, at: Date.now(),
-          });
+          // Repeated tool output is NOT proof of task completion. Allow one
+          // corrective model step with tools and de-duplicated evidence.
+          // Reserve one more step for a bounded text-only final fallback.
+          if (recoveryAttempts === 0 && step < this.maxSteps - 1) {
+            recoveryAttempts = 1;
+            recoveryPending = true;
+            await this.events.emit({
+              type: "turn.recovery_requested",
+              sessionId: session.id, turnId, stepId,
+              attempt: recoveryAttempts, at: Date.now(),
+            });
+          } else {
+            forceFinalAnswer = true;
+            await this.events.emit({
+              type: "turn.loop_detected",
+              sessionId: session.id, turnId, stepId, at: Date.now(),
+            });
+          }
         }
 
         for (const result of results) {

@@ -136,6 +136,14 @@ export type AgentEvent =
       at: number;
     }>
   | Readonly<{
+      type: "turn.recovery_requested";
+      sessionId: string;
+      turnId: string;
+      stepId: string;
+      attempt: number;
+      at: number;
+    }>
+  | Readonly<{
       type: "turn.loop_detected";
       sessionId: string;
       turnId: string;

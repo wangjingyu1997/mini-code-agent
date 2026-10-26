@@ -1094,3 +1094,73 @@ The new note is an additional bounded model input, not a guarantee of
 correctness or a replacement for source evidence. Groq TPM is unchanged.
 Next: evidence IDs with source versions, task-state transitions, then
 grounded semantic memory consolidation.
+
+---
+
+### 2026-10-26 — P0 task completion: source-grounded acceptance, batch search, corrective recovery
+
+**Trigger:** Groq successfully performed search_code -> read_file -> repeated search_code ->
+repeated read_file, then ToolLoopGuard blocked ALL tools and synthesized an incomplete
+answer. The previous 129 unit tests proved individual components worked, not that
+the model could actually answer the user's source-inspection request.
+
+**Design principle:** Repeated evidence is not proof that the task is complete.
+Do not substitute more memory/planning classes for a task-level acceptance gate.
+
+**Changes**
+
+1. search_code now accepts a single literal (backward compatible) OR a batch
+   of up to eight literals in query, plus contextLines=0..2. It scans each
+   allowed file once, keeps original path:line match markers and labels nearby
+   lines with path:line-:. Still bounded to src/tests, 300 source files,
+   80 matched source lines, 256 KiB per file, no symlinks and no Bash approval.
+   The strict advertised JSON schema requires path/query/contextLines (nullable
+   for backward-compatible default) while runtime validation enforces numeric
+   and length limits. One batch can find import statements and related method
+   calls such as createHash(, randomUUID( and readFile( with adjacent context.
+2. Added evidence-based recovery mode to final-answer-context.ts. On the FIRST
+   stale-read threshold, TurnRunner constructs a single, bounded corrective
+   request from the current goal + unique successful evidence, keeps tools
+   available and asks the model to inspect *different* source locations.
+   If the corrective step still repeats identical reads, it falls back to a
+   text-only final answer with explicit evidence limits. maxSteps remains a
+   hard ceiling; at the step boundary recovery goes directly to finalization
+   when there is no room for both recovery and final synthesis.
+3. Added turn.recovery_requested, a distinct CLI warning REPLAN, and a safe
+   metadata log record. turn.loop_detected now means fallback, not the first
+   opportunity for correction.
+4. Updated provider instructions to recommend one import search followed by
+   batched symbol-use searches rather than repeating node: imports.
+
+**Acceptance tests**
+
+- tests/agent-acceptance.test.ts: a real temporary TypeScript project containing
+  node:crypto/createHash/randomUUID and node:fs/promises/readFile. A deterministic
+  Model drives the actual Registry, Scheduler, search_code and TurnRunner; its
+  second step MUST see paths and actual source call lines, then finish within
+  two model requests without repeated tool calls.
+- tests/tool-loop-guard.test.ts: repeated reads cause ONE tool-enabled recovery
+  request; the scripted model then reads a different file, acquires new source
+  evidence, and completes. A separate test confirms persistent repeat leads
+  to one bounded final fallback rather than an infinite loop.
+- tests/live-acceptance.test.ts: opt-in REAL Groq evaluation on an isolated
+  fixture requiring actual imports, method uses and source-file references.
+  Default pnpm test skips this expensive, network-dependent evaluation.
+
+Local commands:
+
+    git pull --ff-only
+    pnpm test
+    pnpm dev:env
+
+Optional LIVE Groq acceptance (uses MODEL_PROVIDER=groq / GROQ_API_KEY in .env):
+
+    pnpm build
+    AGENT_LIVE_ACCEPTANCE=1 node --env-file=.env --test dist/tests/live-acceptance.test.js
+
+**Limitations:** The deterministic acceptance test validates evidence plumbing
+and termination, not LLM reasoning ability. Live Groq performance remains
+unverified until running the opt-in test with real credentials. The fixed
+3000-token approximate context budget and Groq TPM remain significant limits;
+the source search remains literal rather than AST-based. A model may still
+produce an incomplete answer; we now have a concrete fixture to expose that.

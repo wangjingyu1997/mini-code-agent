@@ -243,6 +243,11 @@ export class TerminalUI {
           this.style("· " + event.durationMs + "ms", "dim"));
         this.line("  " + safeTerminalText(formatDiagnostic(event.error.message)));
         break;
+      case "turn.recovery_requested":
+        this.closeStreamingText();
+        this.line(this.style("⚠ REPLAN", "yellow") + " " +
+          this.style("Read-only results repeated · allowing one corrective tool step", "dim"));
+        break;
       case "turn.loop_detected":
         this.closeStreamingText();
         this.line(this.style("⚠ REPEATED READS", "yellow") + " " +

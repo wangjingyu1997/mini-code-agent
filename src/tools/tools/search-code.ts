@@ -70,14 +70,13 @@ export const searchCodeTool: Tool<SearchCodeInput, SearchCodeResult> = {
       path: { type: "string", enum: ["src", "tests"] },
       query: {
         anyOf: [
-          { type: "string", minLength: 1, maxLength: 100 },
-          { type: "array", items: { type: "string", minLength: 1, maxLength: 100 },
-            minItems: 1, maxItems: MAX_QUERIES },
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
         ],
         description: "One literal or a list of up to 8 literals; all scanned in one pass.",
       },
       contextLines: {
-        type: ["integer", "null"], minimum: 0, maximum: MAX_CONTEXT,
+        type: ["integer", "null"],
         description: "Number of nearby source lines (0 to 2); null means 0. Use 1 or 2 to inspect usage.",
       },
     },

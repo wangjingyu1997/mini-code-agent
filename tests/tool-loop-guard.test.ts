@@ -71,7 +71,10 @@ test("repeating read-only tools transitions to one final no-tools model call", a
     assert.match(result.answer, /file.txt/);
     assert.ok(result.steps < 12);
   }
-  assert.deepEqual(requestedTools, [1, 1, 1, 0]);
+  assert.deepEqual(requestedTools, [1, 1, 1, 1, 0],
+    "first detected loop gets one corrective tool step, next repeated read forces fallback");
+  assert.equal(store.all().filter(e => e.type === "turn.recovery_requested").length, 1);
+  assert.equal(store.all().filter(e => e.type === "turn.loop_detected").length, 1);
 });
 
 test("max_steps returns a terminal event visible to observers and trace", async () => {

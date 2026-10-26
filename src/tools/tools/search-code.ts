@@ -40,7 +40,7 @@ function validate(input: unknown): SearchCodeInput {
   const queries = typeof value.query === "string" ? [value.query] : value.query as unknown[];
   if (queries.length < 1 || queries.length > MAX_QUERIES ||
       queries.some(q => typeof q !== "string" || q.length < 1 || q.length > 100)) {
-    throw new TypeError("query must contain 1–8 nonempty literals of at most 100 characters");
+    throw new TypeError("query must be 1–8 nonempty literals of at most 100 characters");
   }
   const context = value.contextLines;
   if (context !== undefined && context !== null &&
